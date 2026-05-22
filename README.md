@@ -3,7 +3,7 @@
 
 ## Repository Structure
 
-\```
+
 FairSurvival_CreditRisk/
 │
 ├── config.py                          # global parameters
