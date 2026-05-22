@@ -3,7 +3,7 @@
 
 ## Repository Structure
 
-
+```
 FairSurvival_CreditRisk/
 │
 ├── config.py                          # global parameters
@@ -49,6 +49,8 @@ FairSurvival_CreditRisk/
 ├── notebooks/
 │   ├── InitialModel.ipynb
 │   ├── ModelFairness.ipynb
+
+```
 │   └── Evaluation.ipynb
 │
 └── outputs/
