@@ -37,27 +37,46 @@ genvar <- function(nsub = 1000,
   z[[1]] <- matrix(rnorm(ncov * nsub), nrow = ncov, ncol = nsub)   
   n1seq <- ncovfixed * nsub
   n2seq <- (ncov - ncovfixed) * nsub
-  S <- rbinom(nsub, size = 1, prob = 0.3) 
   
   if (scenario %in% c("direct", "proxy","temporal")) {
+    S <- rbinom(nsub, size = 1, prob = 0.3) 
+    }
+  else{
+    S <- rbinom(nsub, size = 1, prob = 0.5) 
+    }
+  
   idx_S0 <- which(S == 0)
   idx_S1 <- which(S == 1)
-  mats   <- create_matsigma_by_group(S)
+  
+  
+  # matsigma per gruppo solo per direct e proxy
+  if (scenario %in% c("direct", "proxy", "temporal")) {
+    matsigma_S0 <- matsigma  # quella originale passata da fuori
+    matsigma_S1 <- matsigma
+    matsigma_S1[4, 4] <- matsigma[4, 4] + 0.15  # X4 più rumorosa per S=1
+    matsigma_S1[6, 6] <- matsigma[6, 6] + 0.15  # X6 più rumorosa per S=1
+  }
+  z <- rep(list(0), nperiod)
+  z[[1]] <- matrix(rnorm(ncov * nsub), nrow = ncov, ncol = nsub)
+  
+
+  
   
   for (pp in 2:nperiod) {
     noise <- matrix(c(rep(0, n1seq), rnorm(n2seq)),
                     nrow = ncov, ncol = nsub, byrow = TRUE)
-    z[[pp]][, idx_S0] <- mats$S0 %*% z[[pp-1]][, idx_S0] + noise[, idx_S0]
-    z[[pp]][, idx_S1] <- mats$S1 %*% z[[pp-1]][, idx_S1] + noise[, idx_S1]
-  }
+    
+    if (scenario %in% c("direct", "proxy","temporal")) {
+      z[[pp]] <- z[[pp-1]]  # inizializza
+      z[[pp]][, idx_S0] <- matsigma_S0 %*% z[[pp-1]][, idx_S0] + noise[, idx_S0]
+      z[[pp]][, idx_S1] <- matsigma_S1 %*% z[[pp-1]][, idx_S1] + noise[, idx_S1]
+    } else {
+      # fair: comportamento originale
+      z[[pp]] <- matsigma %*% z[[pp-1]] + noise
+    }
 }
-  if (scenario == "fair"){
-  for (pp in 2:nperiod) {
-    z[[pp]] <- matsigma %*% z[[pp - 1]] + 
-      matrix(c(rep(0, n1seq), rnorm(n2seq)), nrow = ncov, ncol = nsub, byrow = TRUE)
-  
-  }
-  }
+
+
   
   Data <- matrix(NA, nrow = nperiod * nsub, ncol = ncov + 1)
   colnames(Data) <- c(paste0("X", 1:ncov), "S")
@@ -87,24 +106,26 @@ genvar <- function(nsub = 1000,
   
   if (scenario == "proxy") {
     S_rep <- rep(S, each = nperiod)
-    time_idx <- rep(1:nperiod, times = nsub)  
     for (jj in 1:ncov) {
       if (Gamma_vec[jj] != 0) {
         Data[, jj] <- Data[, jj] + Gamma_vec[jj] * S_rep
       }
     }
-    S_rep <- rep(S, each = nperiod)
-    Data[, "X4"] <- Data[, "X4"] + rnorm(nrow(Data), 0, coeff$NoiseS) * S_rep
-    Data[, "X6"] <- Data[, "X6"] + rnorm(nrow(Data), 0, coeff$NoiseS) * S_rep                      
-      
+    # rumore sistematico su X4 e X6
+   # Data[, "X4"] <- Data[, "X4"] + rexp(nrow(Data), rate=1/Coeff$NoiseS) * S_rep
+    #Data[, "X6"] <- Data[, "X6"] - rexp(nrow(Data), rate=1/Coeff$NoiseS) * S_rep
+    
   } else if (scenario == "temporal") {
     S_rep    <- rep(S, each = nperiod)
-    time_idx <- rep(1:nperiod, times = nsub) 
+    time_idx <- rep(1:nperiod, times = nsub)
     for (jj in 1:ncov) {
       if (Gamma_vec[jj] != 0) {
         Data[, jj] <- Data[, jj] + Gamma_vec[jj] * S_rep * log(time_idx)
       }
     }
+    # stesso rumore di proxy ma crescente nel tempo — coerente con semantica temporal
+    #Data[, "X4"] <- Data[, "X4"] + rexp(nrow(Data), rate=1/Coeff$NoiseS) * S_rep * log(time_idx)
+    #Data[, "X6"] <- Data[, "X6"] - rexp(nrow(Data), rate=1/Coeff$NoiseS) * S_rep * log(time_idx)
   }
 
   return(Data)
