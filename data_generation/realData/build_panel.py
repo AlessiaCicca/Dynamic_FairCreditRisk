@@ -225,6 +225,26 @@ def add_time_columns(perf: pd.DataFrame) -> pd.DataFrame:
     return perf
 
 
+# Calcola FirstEventTime = primo mese di default per loan
+delq = pd.to_numeric(perf["current_loan_delinquency_status"], errors="coerce")
+delq_str = perf["current_loan_delinquency_status"].astype(str).str.strip()
+is_default = np.where(
+    delq.notna(),
+    (delq != 0).astype(int),
+    (~delq_str.isin({"", "0", "00"})).astype(int)
+)
+perf["_is_default"] = is_default
+
+first_event = (
+    perf[perf["_is_default"] == 1]
+    .groupby("loan_sequence_number")["loan_age"]
+    .min()
+    .rename("FirstEventTime")
+)
+perf = perf.merge(first_event, on="loan_sequence_number", how="left")
+perf.drop(columns=["_is_default"], inplace=True)
+
+
 # ── Step 4: merge with matched ────────────────────────────────────────────────
 
 def build_panel(perf: pd.DataFrame, matched: pd.DataFrame) -> pd.DataFrame:
