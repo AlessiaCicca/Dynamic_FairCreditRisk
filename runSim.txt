@@ -1,0 +1,23 @@
+# Step 1 — genera i dati
+cd data_generation/simulation/
+Rscript run.R
+# → run_20260523_143000/data_fair.csv, test_fair_t1.csv, ...
+
+# Step 2 — training + fairness
+cd ../..
+python experiments/run_simulation.py \
+    --data_dir data_generation/simulation/run_20260523_143000 \
+    --scenario fair
+
+# Step 3 — con grid search
+python experiments/run_simulation.py \
+    --data_dir data_generation/simulation/run_20260523_143000 \
+    --scenario fair \
+    --grid_search
+
+# Step 4 — tutti gli scenari
+for sc in fair unfair direct proxy; do
+    python experiments/run_simulation.py \
+        --data_dir data_generation/simulation/run_20260523_143000 \
+        --scenario $sc
+done
