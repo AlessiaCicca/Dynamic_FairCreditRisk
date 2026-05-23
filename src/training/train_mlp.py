@@ -111,10 +111,6 @@ def train_mlp(
         torch.tensor(time_tr.astype(np.float32), device=DEVICE)
         if time_tr is not None else None
     )
-    subj_train = (
-        torch.tensor(subj_ids_tr.astype(np.float32), device=DEVICE)
-        if subj_ids_tr is not None else None
-    )
 
     # ── pos_weight ────────────────────────────────────────────────────────────
     n_pos = max((ytr == 1).sum(), 1)

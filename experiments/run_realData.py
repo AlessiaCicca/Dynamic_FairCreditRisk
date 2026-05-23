@@ -388,7 +388,7 @@ def main():
     )
 
     print(f"\n{'='*60}")
-    print(f"  Dataset   : FNMA real")
+    print(f"  Dataset   :  REAL")
     print(f"  Attr      : {args.fair_attr}")
     print(f"  Data      : {args.data_path}")
     print(f"  Out dir   : {out_dir}")

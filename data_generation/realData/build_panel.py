@@ -206,44 +206,63 @@ def load_performance(perf_txt_files, loan_ids, parquet_path, chunk_size=200_000)
 
 # ── Step 3: add time columns ──────────────────────────────────────────────────
 
+import numpy as np
+import pandas as pd
+
 def add_time_columns(perf: pd.DataFrame) -> pd.DataFrame:
     """Parse YYYYMM period and add year, month, quarter columns."""
+
+    perf = perf.copy()
+
     perf["monthly_reporting_period"] = perf["monthly_reporting_period"].str.strip()
-    perf["period_year"]   = perf["monthly_reporting_period"].str[:4].astype(int)
-    perf["period_month"]  = perf["monthly_reporting_period"].str[4:6].astype(int)
-    perf["quarter"]       = ((perf["period_month"] - 1) // 3 + 1).astype(int)
+    perf["period_year"] = perf["monthly_reporting_period"].str[:4].astype(int)
+    perf["period_month"] = perf["monthly_reporting_period"].str[4:6].astype(int)
+    perf["quarter"] = ((perf["period_month"] - 1) // 3 + 1).astype(int)
+
     perf["period_quarter"] = (
-        perf["period_year"].astype(str) + "Q" + perf["quarter"].astype(str)
+        perf["period_year"].astype(str)
+        + "Q"
+        + perf["quarter"].astype(str)
     )
 
-    # Numeric conversions for key columns
-    for col in ["current_upb", "loan_age", "remaining_months_to_maturity",
-                "current_interest_rate", "estimated_ltv", "current_deferred_upb"]:
+    # Numeric conversions
+    for col in [
+        "current_upb",
+        "loan_age",
+        "remaining_months_to_maturity",
+        "current_interest_rate",
+        "estimated_ltv",
+        "current_deferred_upb",
+    ]:
         if col in perf.columns:
             perf[col] = pd.to_numeric(perf[col], errors="coerce")
 
+    # =========================
+    # FirstEventTime (DEFAULT)
+    # =========================
+
+    delq = pd.to_numeric(perf["current_loan_delinquency_status"], errors="coerce")
+    delq_str = perf["current_loan_delinquency_status"].astype(str).str.strip()
+
+    is_default = np.where(
+        delq.notna(),
+        (delq != 0).astype(int),
+        (~delq_str.isin({"", "0", "00"})).astype(int),
+    )
+
+    perf["_is_default"] = is_default
+
+    first_event = (
+        perf[perf["_is_default"] == 1]
+        .groupby("loan_sequence_number")["loan_age"]
+        .min()
+        .rename("FirstEventTime")
+    )
+
+    perf = perf.merge(first_event, on="loan_sequence_number", how="left")
+    perf.drop(columns=["_is_default"], inplace=True)
+
     return perf
-
-
-# Calcola FirstEventTime = primo mese di default per loan
-delq = pd.to_numeric(perf["current_loan_delinquency_status"], errors="coerce")
-delq_str = perf["current_loan_delinquency_status"].astype(str).str.strip()
-is_default = np.where(
-    delq.notna(),
-    (delq != 0).astype(int),
-    (~delq_str.isin({"", "0", "00"})).astype(int)
-)
-perf["_is_default"] = is_default
-
-first_event = (
-    perf[perf["_is_default"] == 1]
-    .groupby("loan_sequence_number")["loan_age"]
-    .min()
-    .rename("FirstEventTime")
-)
-perf = perf.merge(first_event, on="loan_sequence_number", how="left")
-perf.drop(columns=["_is_default"], inplace=True)
-
 
 # ── Step 4: merge with matched ────────────────────────────────────────────────
 
