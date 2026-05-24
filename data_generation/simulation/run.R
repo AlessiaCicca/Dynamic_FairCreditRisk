@@ -38,8 +38,7 @@ for (sc in scenarios) {
   df_percent$S <- rownames(df_percent); df_percent <- df_percent[, c("S", setdiff(names(df_percent), "S"))] 
 
   df_info <- data.frame(Metric = "Death Rate", Value = result$Info$DRate)
-  cat("Death rate:", result$Info$DRate, "\n\n")
-  
+
   # --- Coefficients used in generation ---
   coefficients <- create_coeff(scenario = sc, nsub = 6000)
   coeff_list <- coefficients$Coeff
