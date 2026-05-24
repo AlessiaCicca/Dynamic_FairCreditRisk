@@ -1,28 +1,7 @@
 """
-data_generation/fnma/match_hmda.py
-
 Match Freddie Mac origination data with HMDA demographic data.
-Produces matched_{YEAR}.csv with Freddie variables + HMDA demographics.
+Produces matched_{YEAR}.csv with Freddie Mac variables + HMDA demographics.
 
-Usage:
-    python match_hmda.py --drive_root /path/to/thesis_data --year 2024
-
-    # Combine all matched years into one file:
-    python match_hmda.py --drive_root /path/to/thesis_data --year 2024 --combine
-
-Expected directory structure:
-    drive_root/
-        hmda/
-            hmda_2024.csv
-        freddie/
-            historical_data_2024/
-                historical_data_2024Q1.zip
-                historical_data_2024Q2.zip
-                ...
-        output/                        <- created automatically
-
-Output:
-    drive_root/output/matched_{YEAR}.csv
 """
 
 import os
@@ -50,7 +29,10 @@ FREDDIE_ORIG_COLS = [
     "io_indicator", "mi_cancellation",
 ]
 
+# Freddie Mac and HMDA encode the same information with different labels
+# Occupancy type: P=Primary (1), S=Secondary (2), I=Investment (3)
 FREDDIE_OCC_MAP     = {"P": 1, "S": 2, "I": 3}
+# Loan purpose: P=Purchase (1), C=Cash-out refinance (32), N/R=No cash-out refinance (31)
 FREDDIE_PURPOSE_MAP = {"P": 1, "C": 32, "N": 31, "R": 31}
 
 MATCH_KEYS = [
@@ -92,93 +74,73 @@ HMDA_EXTRA_COLS = [
 ]
 
 CHUNK_SIZE    = 200_000
-KEEP_ALL_HMDA = False
 
-
-# ── Freddie utilities ─────────────────────────────────────────────────────────
-
-def unzip_freddie_year(year: int, freddie_dir: str,
-                       freddie_local: str) -> list:
-    """
-    Find Freddie Mac quarterly zip files and extract origination .txt files
-    to local disk. Returns sorted list of extracted .txt paths.
-    """
-    zip_pattern_sub  = os.path.join(
-        freddie_dir, f"historical_data_{year}", f"historical_data_{year}Q*.zip"
-    )
-    zip_pattern_flat = os.path.join(
-        freddie_dir, f"historical_data_{year}Q*.zip"
-    )
+# Finds Freddie Mac zip files for a given year, extracts only the origination
+def unzip_freddie_year(year, freddie_dir, freddie_local):
+    
+    zip_pattern_sub  = os.path.join(freddie_dir, f"historical_data_{year}", f"historical_data_{year}Q*.zip")
+    zip_pattern_flat = os.path.join(freddie_dir, f"historical_data_{year}Q*.zip")
+    
     zip_files = glob.glob(zip_pattern_sub) or glob.glob(zip_pattern_flat)
 
     if not zip_files:
-        raise FileNotFoundError(
-            f"\nNo zip files found for {year}.\n"
-            f"Patterns checked:\n  {zip_pattern_sub}\n  {zip_pattern_flat}"
-        )
+        raise FileNotFoundError( f"No zip files found for {year}.")
 
-    print(f"Found {len(zip_files)} zip files for {year}:")
+   
     extracted = []
-
+    
+    # Iterates over zip files in alphabetical/chronological order (Q1→Q2→Q3→Q4)
     for zpath in sorted(zip_files):
         zname    = os.path.basename(zpath)
-        txt_dest = os.path.join(freddie_local,
-                                zname.replace(".zip", ".txt"))
+        txt_dest = os.path.join(freddie_local, zname.replace(".zip", ".txt"))
 
+        # If the .txt already exists on disk → skip extraction
         if os.path.exists(txt_dest):
-            size_mb = os.path.getsize(txt_dest) / 1e6
-            print(f"  {zname} -> already extracted ({size_mb:.0f} MB), skip")
             extracted.append(txt_dest)
             continue
 
-        print(f"  Extracting {zname} ...", end=" ", flush=True)
+        print(f"  Extracting {zname}")
+
+        # Opens the zip in read "r" mode
         with zipfile.ZipFile(zpath, "r") as z:
-            orig_files = [f for f in z.namelist()
-                          if "time" not in f.lower() and f.endswith(".txt")]
+            # Lists all files inside the zip and keeps only the origination file (excludes the time series one).
+            orig_files = [f for f in z.namelist() if "time" not in f.lower() and f.endswith(".txt")]
             if not orig_files:
-                print(f"\n  WARNING: no origination file in {zname}")
                 continue
+            # Opens the file inside the zip and writes "wb" it to disk 
             with z.open(orig_files[0]) as src, open(txt_dest, "wb") as dst:
                 shutil.copyfileobj(src, dst)
-
-        size_mb = os.path.getsize(txt_dest) / 1e6
-        print(f"OK ({size_mb:.0f} MB)")
         extracted.append(txt_dest)
 
-    return sorted(extracted)
+    return extracted
 
-
-def load_and_prepare_freddie(txt_files: list, year: int) -> pd.DataFrame:
-    """Load all Freddie .txt files, apply mappings, rename columns for merge."""
+# Load and prepare Freddie Mac files for a given year to be matched
+def load_and_prepare_freddie(txt_files, year):
     frames = []
     for f in txt_files:
         df = pd.read_csv(f, sep="|", header=None, names=FREDDIE_ORIG_COLS,
                          usecols=None, dtype=str, low_memory=False)
-        print(f"  {os.path.basename(f)}: {len(df):,} rows")
         frames.append(df)
-
+    # All quarters are concatenated into one dataframe
     freddie = pd.concat(frames, ignore_index=True)
     del frames
     gc.collect()
-    print(f"Total loaded: {len(freddie):,} rows")
 
-    # Filter by year
+    # Filter by year: keeps only loans whose first payment date falls in year or year-1
     freddie["fp_year"] = freddie["first_payment_date"].str[:4]
     freddie = freddie[freddie["fp_year"].isin([str(year), str(year - 1)])]
-    print(f"After year filter: {len(freddie):,} rows")
 
     # Save original codes before mapping
     freddie["occupancy_status_orig"] = freddie["occupancy_status"].copy()
     freddie["loan_purpose_orig"]     = freddie["loan_purpose"].copy()
 
-    # zip3
-    freddie["zip3"] = freddie["postal_code"].str[:3]
-
-    # Apply mappings
     freddie["occupancy_type"] = freddie["occupancy_status"].map(FREDDIE_OCC_MAP)
     freddie["loan_purpose"]   = freddie["loan_purpose"].map(FREDDIE_PURPOSE_MAP)
 
-    # Rename to HMDA key names
+    # zip3
+    freddie["zip3"] = freddie["postal_code"].str[:3]
+
+    # Rename to HMDA key names 
     freddie.rename(columns={
         "property_state":         "state_code",
         "original_upb":           "loan_amount_r",
@@ -196,197 +158,115 @@ def load_and_prepare_freddie(txt_files: list, year: int) -> pd.DataFrame:
     freddie["msa"]        = freddie["msa"].str.strip().fillna("")
     freddie["state_code"] = freddie["state_code"].str.strip()
 
-    before = len(freddie)
     freddie.dropna(subset=MATCH_KEYS, inplace=True)
-    print(f"After dropna on keys: {len(freddie):,} rows "
-          f"(removed {before - len(freddie):,})")
-
     return freddie
 
-
-# ── HMDA utilities ────────────────────────────────────────────────────────────
-
-def find_hmda_file(year: int, hmda_dir: str) -> str:
-    candidates = [
-        os.path.join(hmda_dir, f"hmda_{year}.csv"),
-        os.path.join(hmda_dir, f"{year}_public_lar.csv"),
-        os.path.join(hmda_dir, f"hmda_{year}_nationwide_all-records_labels.csv"),
-        os.path.join(hmda_dir, f"hmda_{year}_nationwide_all-records_codes.csv"),
-    ]
-    for c in candidates:
-        if os.path.exists(c):
-            return c
-    found = glob.glob(os.path.join(hmda_dir, f"*{year}*.csv"))
-    if found:
-        return found[0]
-    raise FileNotFoundError(
-        f"\nNo HMDA file found for {year} in '{hmda_dir}'.\n"
-        f"Expected: hmda_{year}.csv"
-    )
-
-
-def prepare_hmda_chunk(chunk: pd.DataFrame, year: int) -> pd.DataFrame:
-    """Filter and prepare one HMDA chunk for merging."""
+# Finds HMDA files for a given year
+def find_hmda_file(year, hmda_dir):
+    path = os.path.join(hmda_dir, f"{year}_public_lar.csv")
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"No HMDA file found for {year}")
+    return path
+    
+# Filter and prepare one chunck of HMDA for merging.
+def prepare_hmda_chunk(chunk, year):
     chunk.rename(columns=lambda c: c.replace("-", "_"), inplace=True)
-
-    if "activity_year" in chunk.columns:
-        chunk = chunk[chunk["activity_year"].astype(str) == str(year)]
-    if chunk.empty:
-        return chunk
-
+    
+    # Keep only loans from the target year
+    chunk = chunk[chunk["activity_year"].astype(str) == str(year)]
+    # Keep only loans with Freddie Mac as purchaser type
     chunk = chunk[chunk["purchaser_type"].astype(str) == "3"]
-    if chunk.empty:
-        return chunk
-
+    # Keep only originated loans
     chunk = chunk[chunk["action_taken"].astype(str) == "1"]
-    if chunk.empty:
-        return chunk
 
+    # Harmonize with Freddie Mac
     chunk = chunk[chunk["total_units"].isin(["1", "2", "3", "4"])]
-    if chunk.empty:
-        return chunk
 
-    for col in ["loan_amount", "interest_rate", "loan_term",
-                "total_units", "occupancy_type", "loan_purpose"]:
+    # Numeric conversions
+    for col in ["loan_amount", "interest_rate", "loan_term","total_units", "occupancy_type", "loan_purpose"]:
         if col in chunk.columns:
             chunk[col] = pd.to_numeric(chunk[col], errors="coerce")
-
+            
     chunk = chunk[chunk["loan_purpose"].isin([1, 31, 32])]
-    if chunk.empty:
-        return chunk
-
     chunk["loan_amount_r"] = (chunk["loan_amount"] / 1000).round() * 1000
-
     rename_map = {}
     if "total_units"    in chunk.columns: rename_map["total_units"]    = "num_units"
     if "derived_msa_md" in chunk.columns: rename_map["derived_msa_md"] = "msa"
     chunk.rename(columns=rename_map, inplace=True)
-
-    if "state_code" in chunk.columns:
-        chunk["state_code"] = chunk["state_code"].str.strip()
-    if "msa" in chunk.columns:
-        chunk["msa"] = chunk["msa"].str.strip().fillna("")
+    chunk["state_code"] = chunk["state_code"].str.strip()
+    chunk["msa"] = chunk["msa"].str.strip().fillna("")
 
     chunk.dropna(subset=MATCH_KEYS, inplace=True)
+    
     if chunk.empty:
         return chunk
 
-    if KEEP_ALL_HMDA:
-        return chunk
-
+    # Select columns to keep
     cols_to_keep = (
         MATCH_KEYS +
         ["loan_amount"] +
         [c for c in HMDA_DEMO_COLS  if c in chunk.columns] +
         [c for c in HMDA_EXTRA_COLS if c in chunk.columns]
     )
-    seen = set()
+    seen = set() #To removes duplicates while preserving order.
     cols_to_keep = [c for c in cols_to_keep
                     if c in chunk.columns and not (c in seen or seen.add(c))]
+    
     return chunk[cols_to_keep]
 
 
-# ── Main match logic ──────────────────────────────────────────────────────────
-
-def run_match(year: int, drive_root: str) -> None:
+# MAIN MATCH
+def run_match(year, drive_root):
     hmda_dir      = os.path.join(drive_root, "hmda")
     freddie_dir   = os.path.join(drive_root, "freddie")
     freddie_local = os.path.join(drive_root, "freddie_local_tmp")
     output_dir    = os.path.join(drive_root, "output")
 
+    # Creates output folders if they don't exist yet.
     os.makedirs(output_dir,    exist_ok=True)
     os.makedirs(freddie_local, exist_ok=True)
 
-    print(f"\n{'='*60}")
-    print(f"  Year       : {year}")
-    print(f"  HMDA dir   : {hmda_dir}")
-    print(f"  Freddie dir: {freddie_dir}")
-    print(f"  Output dir : {output_dir}")
-    print(f"{'='*60}\n")
-
-    # ── Step 1: extract and load Freddie ─────────────────────────────────────
-    print(f"Extracting Freddie Mac {year}...")
+    # Extract and load Freddie 
     txt_files     = unzip_freddie_year(year, freddie_dir, freddie_local)
     freddie_ready = load_and_prepare_freddie(txt_files, year)
-    print(f"\nFreddie ready: {len(freddie_ready):,} rows, "
-          f"{len(freddie_ready.columns)} columns\n")
 
-    # ── Step 2: chunk match with HMDA ────────────────────────────────────────
+    # Retrieve HMDA - HMDA is too large to load entirely in memory, read 200k rows at a time 
     hmda_path = find_hmda_file(year, hmda_dir)
-    print(f"HMDA file  : {hmda_path}")
-    print(f"Chunk size : {CHUNK_SIZE:,}\n")
-
-    chunk_results  = []
-    chunk_num      = 0
-    total_rows     = 0
-    total_filtered = 0
-    total_matched  = 0
-
+    chunk_results=[]
+    
     for chunk in pd.read_csv(hmda_path, dtype=str,
                              chunksize=CHUNK_SIZE, low_memory=False):
-        chunk_num  += 1
-        total_rows += len(chunk)
-
         chunk_clean = prepare_hmda_chunk(chunk, year)
         del chunk
         gc.collect()
-
-        if chunk_clean.empty:
-            if chunk_num % 10 == 0:
-                print(f"  Chunk {chunk_num:3d} | read {total_rows:>10,} | "
-                      f"filtered {total_filtered:>8,} | matched {total_matched:>7,}")
-            continue
-
-        total_filtered += len(chunk_clean)
-
+                                 
+        # Keeps only loans that appear in both datasets (inner), using the columns
+        # MATCH_KEYS as column
         matched = pd.merge(chunk_clean, freddie_ready, on=MATCH_KEYS,
                            how="inner", suffixes=("_hmda", "_freddie"))
         del chunk_clean
         gc.collect()
+        chunk_results.append(matched)
 
-        if not matched.empty:
-            total_matched += len(matched)
-            chunk_results.append(matched)
 
-        if chunk_num % 10 == 0:
-            print(f"  Chunk {chunk_num:3d} | read {total_rows:>10,} | "
-                  f"filtered {total_filtered:>8,} | matched {total_matched:>7,}")
-
-    print(f"\nDone. Chunks: {chunk_num:,} | HMDA rows: {total_rows:,} | "
-          f"Filtered: {total_filtered:,} | Raw matches: {total_matched:,}")
-
-    if not chunk_results:
-        print("No matches found. Check paths and year.")
-        return
-
-    # ── Step 3: deduplicate and save ─────────────────────────────────────────
-    print("\nCombining chunks...")
     all_matches = pd.concat(chunk_results, ignore_index=True)
     del chunk_results
     gc.collect()
-    print(f"Total matches before dedup: {len(all_matches):,}")
 
+    # Deduplicate strategies:
+    # - Find cases where the same HMDA line was matched with multiple Freddie loans
+    # - Find cases where the same Freddie loans was matched with multiple HMDA line
     dup_freddie  = all_matches.duplicated(subset=["loan_sequence_number"], keep=False)
     dup_hmda     = all_matches.duplicated(subset=MATCH_KEYS, keep=False)
     is_ambiguous = dup_freddie | dup_hmda
-    n_amb        = is_ambiguous.sum()
-
-    print(f"Collisions removed : {n_amb:,}  ({100*n_amb/len(all_matches):.1f}%)")
-    print(f"  Freddie dupes    : {dup_freddie.sum():,}")
-    print(f"  HMDA dupes       : {dup_hmda.sum():,}")
 
     final = all_matches[~is_ambiguous].copy()
     del all_matches
     gc.collect()
 
-    n_clean = len(final)
-    print(f"Clean 1-to-1 matches: {n_clean:,}")
-    print(f"Match rate: {n_clean:,} / {len(freddie_ready):,} = "
-          f"{100*n_clean/len(freddie_ready):.1f}%")
-
     final["match_year"] = year
 
-    # ── Column ordering ───────────────────────────────────────────────────────
+
     id_cols = ["loan_sequence_number", "match_year"]
     freddie_cols_in_output = [
         "credit_score", "first_payment_date", "first_time_homebuyer",
@@ -406,6 +286,7 @@ def run_match(year: int, drive_root: str) -> None:
 
     ordered = []
     seen    = set()
+    # Ordering 
     for group in [id_cols, freddie_cols_in_output, match_cols, demo_cols, extra_cols]:
         for c in group:
             if c in final.columns and c not in seen:
@@ -414,25 +295,18 @@ def run_match(year: int, drive_root: str) -> None:
                 c_suf = f"{c}{suffix}"
                 if c_suf in final.columns and c_suf not in seen:
                     ordered.append(c_suf); seen.add(c_suf)
+    final = final[ordered + [c for c in final.columns if c not in seen]]
 
-    remaining = [c for c in final.columns if c not in seen]
-    ordered  += remaining
-
-    final = final[ordered]
-
+    # SAVE
     out_path = os.path.join(output_dir, f"matched_{year}.csv")
     final.to_csv(out_path, index=False)
 
-    size_mb = os.path.getsize(out_path) / 1e6
-    print(f"\nSaved: {out_path}  ({size_mb:.1f} MB)")
-    print(f"Rows   : {len(final):,}")
-    print(f"Columns: {len(final.columns)}")
-    print(f"\n[A] Identifiers   : {[c for c in id_cols if c in final.columns]}")
-    print(f"[B] Freddie (32)  : {[c for c in freddie_cols_in_output if c in final.columns]}")
-    print(f"[D] HMDA demo     : {demo_cols}")
+    n_clean = len(final)
+    print(f"Clean 1-to-1 matches: {n_clean:,} / {len(freddie_ready):,} "
+          f"({100*n_clean/len(freddie_ready):.1f}%)")
 
 
-def combine_years(drive_root: str) -> None:
+def combine_years(drive_root):
     """Combine all matched_{YEAR}.csv into one file."""
     output_dir = os.path.join(drive_root, "output")
     files = sorted(glob.glob(os.path.join(output_dir, "matched_20*.csv")))
