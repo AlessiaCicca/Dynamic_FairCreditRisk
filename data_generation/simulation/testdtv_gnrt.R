@@ -1,21 +1,16 @@
-##########################################################################################################
+# =============================================================================
+# Adapted from:
+#   "Dynamic Estimation with Random Forests for Discrete-Time Survival Data" (2021)
+# Modifications:
+#   - Fixed simulation parameters
+#   - Added 4 fairness scenarios (fair, direct, proxy, temporal)
+# =============================================================================
+
+
 testdtv_gnrt = function(data, ntest, id = NULL, period = NULL, y = NULL){
-  ############################################################
-  # GOAL #
-  # generates the test data sets, one for each t (given T > t)
-  
-  # INPUT #
-  # data = person-period data (pseudo-subject observations)
-  # ntest = size of the test data set (for each t = 0, ..., maxt - 1), a sample of size ntest is produced.
-  # period = name of the variable representing the period/(discrete) time.
-  # id = name of subject identifier.
-  # y = name of the target (the 0-1 event indicator).
-  
-  # OUTPUT #
-  # a list of maxt elements
-  # element j (j = 1, ..., maxt) is the data frame of the test points when t = (j - 1)
-  ############################################################
-  
+
+  # Generates the test data sets, one for each t (given T > t)
+
   maxt <- max(data[, period])    # number of periods
   allid <- unique(data[, id])    # unique id from the data
   ind <- sample(allid, ntest)    # sample of subject (their id)
@@ -32,7 +27,7 @@ testdtv_gnrt = function(data, ntest, id = NULL, period = NULL, y = NULL){
     if (length(unique(indc)) < ntest) stop(sprintf("Number of subjects in %1.0f-th set from the provided sample: %1.0f < ntest!", 
                                                    j, length(unique(indc))))
     
-    ind <- sample(indc, ntest)          # sample of subject (their id)    
+    ind <- sample(indc, ntest)   
     inddata <- which(data[, id] %in% ind)
     out[[j]] <- data[inddata, ]
   }
