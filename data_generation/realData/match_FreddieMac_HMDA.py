@@ -306,57 +306,15 @@ def run_match(year, drive_root):
           f"({100*n_clean/len(freddie_ready):.1f}%)")
 
 
-def combine_years(drive_root):
-    """Combine all matched_{YEAR}.csv into one file."""
-    output_dir = os.path.join(drive_root, "output")
-    files = sorted(glob.glob(os.path.join(output_dir, "matched_20*.csv")))
-
-    if not files:
-        print("No matched_*.csv files found.")
-        return
-
-    print(f"Found {len(files)} files:")
-    for f in files:
-        print(f"  {os.path.basename(f)}")
-
-    print("\nCombining... (heavy operation)")
-    final_all = pd.concat(
-        [pd.read_csv(f, dtype=str, low_memory=False) for f in files],
-        ignore_index=True,
-    )
-    final_all["match_year"] = final_all["match_year"].astype(int)
-
-    out_path = os.path.join(output_dir, "matched_all_years.csv")
-    final_all.to_csv(out_path, index=False)
-
-    size_mb = os.path.getsize(out_path) / 1e6
-    print(f"\nCombined dataset: {len(final_all):,} rows")
-    print(f"Saved: {out_path}  ({size_mb:.1f} MB)")
-    print("\nRows per year:")
-    print(final_all.groupby("match_year").size().rename("rows").to_string())
-
-
-# ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Match Freddie Mac origination data with HMDA demographics."
-    )
+    parser = argparse.ArgumentParser()
     parser.add_argument(
         "--drive_root", required=True,
-        help="Root directory (e.g. /content/drive/MyDrive/thesis_data)"
-    )
+        help="Root directory (e.g. /content/drive/MyDrive/thesis_data)")
     parser.add_argument(
         "--year", type=int, required=True,
-        help="Year to process (e.g. 2024)"
-    )
-    parser.add_argument(
-        "--combine", action="store_true",
-        help="After matching, combine all matched_*.csv into one file"
-    )
+        help="Year to process (e.g. 2024)")
+    
     args = parser.parse_args()
-
     run_match(year=args.year, drive_root=args.drive_root)
-
-    if args.combine:
-        combine_years(drive_root=args.drive_root)
