@@ -2,3 +2,4 @@ Aggiungere e sistemare codice preprocessing
 Notebook di EDA serio
 Migliorare feature engineering e model
 Cancellare il pp e le cose relative
+Cancellare pp da AUC_FAINRESS
