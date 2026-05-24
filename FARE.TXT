@@ -1,1 +1,2 @@
 Aggiungere e sistemare codice preprocessing
+Notebook di EDA serio
