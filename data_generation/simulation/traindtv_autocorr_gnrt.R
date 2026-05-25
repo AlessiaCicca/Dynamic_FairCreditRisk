@@ -103,7 +103,7 @@ traindtv_autocorr_gnrt <- function(nsub = 200,
   }
   
                              
-  Data <- Data[!is.na(Data$Event)
+  Data <- Data[!is.na(Data$Event), ]
                
   if (length(unique(Data$ID)) != nsub){
     stop("ID length NOT equal to nsub")

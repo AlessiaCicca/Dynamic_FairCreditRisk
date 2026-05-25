@@ -80,7 +80,7 @@ for (sc in scenarios) {
   }
 }
 
+
 excel_file <- file.path(run_folder, "simulation_results.xlsx")
 saveWorkbook(wb, excel_file, overwrite = TRUE)
-
-
+cat("Data generation process completed!")
