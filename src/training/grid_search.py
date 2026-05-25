@@ -36,8 +36,8 @@ import torch
 
 from src.training.train_mlp import train_mlp
 from src.evaluation.fairness_metrics import (
-    fairness_metrics, filter_sensitive, compute_threshold
-)
+    fairness_metrics, filter_sensitive)
+from src.training.cross_validation import find_best_threshold
 
 warnings.filterwarnings("ignore")
 
@@ -94,7 +94,7 @@ def _run_cv(
         )
         oof_preds[te_idx] = p_te
 
-    th = compute_threshold(y.astype(int), oof_preds)
+    th = find_best_threshold(y.astype(int), oof_preds)
 
     # ── Mean OOF AUC ─────────────────────────────────────────────────────────
     fold_aucs = []

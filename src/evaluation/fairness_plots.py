@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 
 
+
 ATTR_COLORS = {
     "SEX":  "tab:blue",
     "RACE": "tab:orange",
@@ -63,7 +64,6 @@ def plot_separation_over_time_single(
     plt.tight_layout()
     path = out_dir / filename
     plt.savefig(path, dpi=150)
-    plt.show()
     plt.close(fig)
     return path
 
@@ -180,7 +180,4 @@ def plot_auc_fairness_bar(
     plt.savefig(path, dpi=150, bbox_inches="tight")
     plt.show()
     plt.close(fig)
-    return path
-
-    plt.show()
     return path

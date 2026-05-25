@@ -51,10 +51,10 @@ def agg_mean_sd(list_of_dicts: list) -> dict:
         out[f"{k}_SD"]   = float(np.nanstd(vals))
     return out
 
-
 def run_cv(X, y, groups, sensitive,
            time_arr=None, subj_ids=None,
            model_name="", n_splits=5,
+           landmarks=None, 
            **train_kwargs):
     # GroupKFold splits by subject — same subject never in both train and test
     gkf          = GroupKFold(n_splits=n_splits)

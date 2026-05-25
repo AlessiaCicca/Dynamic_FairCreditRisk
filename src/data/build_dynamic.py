@@ -49,9 +49,11 @@ def build_dynamic(
 
 
     # Categorical encoding of landmark -> convert the landamrk column in one-hot
-     if enc_cat is None:
+    if enc_cat is None:
         enc_cat = OneHotEncoder(handle_unknown="ignore", sparse_output=False, dtype=np.float32)
         enc_cat.fit(landmark_df[cat_cols])
+    enc_lmk = OneHotEncoder(handle_unknown="ignore", sparse_output=False, dtype=np.float32)
+    enc_lmk.fit(np.array(landmarks).reshape(-1, 1))
     cats              = enc_cat.transform(landmark_df[cat_cols])
     lmk_oh            = enc_lmk.transform(landmark_df[["landmark"]])
     cat_feature_names = list(enc_cat.get_feature_names_out(cat_cols))

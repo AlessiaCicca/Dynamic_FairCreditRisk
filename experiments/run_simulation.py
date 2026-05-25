@@ -56,15 +56,15 @@ from config import (
 from src.data.build_static        import build_static
 from src.data.build_dynamic       import build_dynamic
 from src.data.build_person_period import build_person_period
-from src.training.cross_validation import run_cv, build_summary_table, build_landmark_summary
+from src.training.cross_validation import run_cv, build_summary_table,find_best_threshold
 from src.training.grid_search      import run_grid_search, plot_tradeoff
 from src.evaluation.fairness_metrics import (
     fairness_metrics, filter_sensitive, res_to_row,
-    print_fairness_report, compute_threshold, compute_adTPR_adFPR,
+    print_fairness_report, compute_adTPR_adFPR,
 )
 from src.evaluation.auc_fairness  import auc_fairness_single_attr
 from src.evaluation.fairness_plots import (
-    plot_fairness_over_time_single, plot_auc_fairness_bar,
+    plot_separation_over_time_single, plot_auc_fairness_bar,
 )
 
 
@@ -117,8 +117,6 @@ def load_raw(data_dir: str, scenario: str) -> pd.DataFrame:
     """Load and prepare the raw simulation panel."""
     path = os.path.join(data_dir, f"data_{scenario}.csv")
     df   = pd.read_csv(path)
-    print(f"  Rows: {len(df):,}  |  Subjects: {df[ID_COL].nunique():,}")
-
     df = df.sort_values([ID_COL, TIME_COL])
 
     # Trend features
@@ -148,7 +146,7 @@ def load_raw(data_dir: str, scenario: str) -> pd.DataFrame:
 
     n_ids    = df[ID_COL].nunique()
     n_events = df.groupby(ID_COL)["FirstEventTime"].first().notna().sum()
-    print(f"  Subjects: {n_ids:,}  |  Events: {n_events:,} ({n_events/n_ids:.1%})")
+ 
 
     return df, trend_cols
 
@@ -163,9 +161,9 @@ def run_fairness_analysis(
 ) -> dict:
     """Compute and save all fairness metrics."""
 
-    th_static  = compute_threshold(y_static,  static_oof)
-    th_dynamic = compute_threshold(y_dynamic, dynamic_oof)
-    th_pp      = compute_threshold(y_pp,      pp_oof)
+    th_static  = find_best_threshold(y_static,  static_oof)
+    th_dynamic = find_best_threshold(y_dynamic, dynamic_oof)
+    th_pp      = find_best_threshold(y_pp,      pp_oof)
 
     ybin_static  = (static_oof  >= th_static ).astype(int)
     ybin_dynamic = (dynamic_oof >= th_dynamic).astype(int)
@@ -198,7 +196,6 @@ def run_fairness_analysis(
         if len(np.unique(yt_f)) < 2 or len(np.unique(sn_f)) < 2: continue
         yb_f = (yp_f >= th_dynamic).astype(int)
         res  = fairness_metrics(yt_f, yp_f, yb_f, sn_f, GROUP_NAMES, threshold=th_dynamic)
-        print_fairness_report("M_DYNAMIC", res, GROUP_NAMES, label=f"landmark={L}")
         dyn_rows.append(res_to_row(res, GROUP_NAMES,
                                    {"model": "M_DYNAMIC", "landmark": L}))
 
@@ -248,17 +245,19 @@ def run_fairness_analysis(
         if k in df_agg.columns
     }
 
-    plot_fairness_over_time_single(
+    plot_separation_over_time_single(
         df_time=df_dyn_lmk, time_col="landmark",
-        title=f"Fairness — M_DYNAMIC  [{ATTR_NAME}]",
+        title=f"Fairness — M_DYNAMIC",
         filename="fairness_dynamic_over_landmark.png",
-        out_dir=out_dir, static_val_dict=static_vals, min_samples_per_group=20,
+        out_dir=out_dir, static_val=float(static_vals.get("separation", np.nan)), min_samples_per_group=20,
     )
-    plot_fairness_over_time_single(
+
+
+    plot_separation_over_time_single(
         df_time=df_pp_time, time_col="time",
-        title=f"Fairness — M_PP  [{ATTR_NAME}]",
+        title=f"Fairness — M_PP",
         filename="fairness_pp_over_time.png",
-        out_dir=out_dir, static_val_dict=static_vals, min_samples_per_group=5,
+        out_dir=out_dir, static_val=float(static_vals.get("separation", np.nan)), min_samples_per_group=5,
     )
     plot_auc_fairness_bar(df_auc=df_auc, out_dir=out_dir,
                           filename="fairness_auc_comparison.png")
@@ -289,8 +288,6 @@ def main():
     print(f"\n{'='*60}")
     print(f"  Scenario : {args.scenario}")
     print(f"  Data dir : {args.data_dir}")
-    print(f"  Out dir  : {out_dir}")
-    print(f"  Device   : {DEVICE}")
     print(f"{'='*60}\n")
 
     # ── Load raw data ─────────────────────────────────────────────────────────
@@ -377,11 +374,6 @@ def main():
     print(summary.to_string(index=False))
     summary.to_csv(out_dir / "cv_results.csv", index=False)
 
-    lmk_summary = build_landmark_summary(res_dynamic, cfg["landmarks"])
-    if not lmk_summary.empty:
-        print("\n=== DYNAMIC — AUC PER LANDMARK ===")
-        print(lmk_summary.to_string(index=False))
-        lmk_summary.to_csv(out_dir / "dynamic_by_landmark_cv.csv", index=False)
 
     # ── Fairness analysis ─────────────────────────────────────────────────────
     print("\n" + "="*60)

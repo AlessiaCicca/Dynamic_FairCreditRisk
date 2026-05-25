@@ -82,9 +82,7 @@ def print_fairness_report(model_name, res,group_names, label: str = "AGGREGATE")
         vf_str = f"{vf:{fmt}}" if not np.isnan(vf) else "   N/A"
         print(f"  {label_row:<22} {vm_str:>14} {vf_str:>14}")
 
-    if "axioms" in res:
-        print(f"\n  {'─'*40}")
-        print(f"  Separation: {res['axioms']['separation']:.4f}")
+
 
 # Converts a fairness_metrics result into a flat dictionary row that will be then aggregated
 def res_to_row(res, group_names, extra_cols={}):
