@@ -7,29 +7,12 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import roc_auc_score, precision_recall_curve
 
-# F1-optimal classification threshold
-def compute_threshold(y_true, y_pred):
-    prec, rec, thr = precision_recall_curve(y_true, y_pred)
-    f1 = 2 * prec[:-1] * rec[:-1] / (prec[:-1] + rec[:-1] + 1e-8)
-    #  finds the index of the threshold that maximises F1
-    return float(thr[np.argmax(f1)]) if len(thr) > 0 else 0.5
 
 # Remove rows where sensitive attribute is not 0 or 1
 def filter_sensitive(y_true, y_pred,sens_arr):
     valid = np.isin(sens_arr, [0, 1])
     return y_true[valid], y_pred[valid], sens_arr[valid]
 
-# AUC, Brier, F1
-def performance_metrics(y_true, y_pred_proba, threshold=0.5):
-    y_true = np.asarray(y_true, dtype=int)
-    y_pred = np.asarray(y_pred_proba, dtype=float)
-    auc    = roc_auc_score(y_true, y_pred) if len(np.unique(y_true)) > 1 else np.nan
-    return dict(
-        AUC   = auc,
-        Brier = brier_score_loss(y_true, y_pred),
-        F1    = f1_score(y_true, (y_pred >= threshold), zero_division=0),
-    )
-    
 
 def fairness_metrics(y_true, y_pred_proba, y_bin, sensitive, group_names, threshold):
     y_true = np.asarray(y_true, dtype=int)
