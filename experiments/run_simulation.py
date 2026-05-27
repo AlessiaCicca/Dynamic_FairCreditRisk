@@ -33,10 +33,10 @@ from config import (
     ALPHA, BETA,
     EO_MODE_D,
     SCHEDULE_MODE_D,
-    HORIZON, LANDMARKS, N_TEST_LANDMARKS,
+    HORIZON, LANDMARKS_SIM, N_TEST_LANDMARKS,
     ID_COL, TIME_COL, EVENT_COL, SENS_COL,
-    STATIC_COLS, TVC_COLS, CAT_COLS, ALL_NUM_COLS,
-    ATTR_NAME, GROUP_NAMES,
+    STATIC_COLS_SIM, TVC_COLS_SIM, CAT_COLS_SIM, ALL_NUM_COLS,
+    ATTR_NAME, GROUP_NAMES_SIM,
     N_FOLDS, USE_WANDB, WANDB_ENTITY, WANDB_PROJECT,
     GRID_BETAS, GRID_ALPHAS,
 )
@@ -83,7 +83,7 @@ def load_config(config_path, args):
         alpha=ALPHA, beta=BETA,
         eo_mode_d=EO_MODE_D,
         schedule_mode_d=SCHEDULE_MODE_D,
-        horizon=HORIZON, landmarks=LANDMARKS,
+        horizon=HORIZON, landmarks=LANDMARKS_SIM,
         n_folds=N_FOLDS, use_wandb=USE_WANDB,
         grid_betas=GRID_BETAS, grid_alphas=GRID_ALPHAS,
     )
@@ -152,9 +152,9 @@ def run_fairness_analysis(
     ]:
         yt_f, yp_f, sn_f = filter_sensitive(y_t, y_p, sens)
         yb_f = (yp_f >= th).astype(int)
-        res  = fairness_metrics(yt_f, yp_f, yb_f, sn_f, GROUP_NAMES, threshold=th)
-        print_fairness_report(mname, res, GROUP_NAMES, label="AGGREGATE")
-        agg_rows.append(res_to_row(res, GROUP_NAMES, {"model": mname}))
+        res  = fairness_metrics(yt_f, yp_f, yb_f, sn_f, GROUP_NAMES_SIM, threshold=th)
+        print_fairness_report(mname, res, GROUP_NAMES_SIM, label="AGGREGATE")
+        agg_rows.append(res_to_row(res, GROUP_NAMES_SIM, {"model": mname}))
 
     df_agg = pd.DataFrame(agg_rows)
     df_agg.to_csv(out_dir / "fairness_aggregate.csv", index=False)
@@ -169,8 +169,8 @@ def run_fairness_analysis(
         )
         if len(np.unique(yt_f)) < 2 or len(np.unique(sn_f)) < 2: continue
         yb_f = (yp_f >= th_dynamic).astype(int)
-        res  = fairness_metrics(yt_f, yp_f, yb_f, sn_f, GROUP_NAMES, threshold=th_dynamic)
-        dyn_rows.append(res_to_row(res, GROUP_NAMES,
+        res  = fairness_metrics(yt_f, yp_f, yb_f, sn_f, GROUP_NAMES_SIM, threshold=th_dynamic)
+        dyn_rows.append(res_to_row(res, GROUP_NAMES_SIM,
                                    {"model": "M_DYNAMIC", "landmark": L}))
 
     df_dyn_lmk = pd.DataFrame(dyn_rows)
@@ -243,13 +243,13 @@ def main():
 
     enc_cat = OneHotEncoder(handle_unknown="ignore",
                              sparse_output=False, dtype=np.float32)
-    enc_cat.fit(df[CAT_COLS])
+    enc_cat.fit(df[CAT_COLS_SIM])
 
     # Build datasets
     print("\nBuilding STATIC dataset...")
     static_data = build_static(
         df=df,
-        static_cols=STATIC_COLS, cat_cols=CAT_COLS,
+        static_cols=STATIC_COLS_SIM, cat_cols=CAT_COLS_SIM,
         horizon=cfg["horizon"],
         id_col=ID_COL, time_col=TIME_COL,
         first_event_col="FirstEventTime",
@@ -259,8 +259,8 @@ def main():
     print("\nBuilding DYNAMIC dataset...")
     dynamic_data = build_dynamic(
         df=df,
-        static_cols=STATIC_COLS, tvc_cols=TVC_COLS,
-        cat_cols=CAT_COLS, landmarks=cfg["landmarks"],
+        static_cols=STATIC_COLS_SIM, tvc_cols=TVC_COLS_SIM,
+        cat_cols=CAT_COLS_SIM, landmarks=cfg["landmarks"],
         horizon=cfg["horizon"],
         id_col=ID_COL, time_col=TIME_COL,
         first_event_col="FirstEventTime",
@@ -331,7 +331,7 @@ def main():
             X_dynamic=dynamic_data["X"], y_dynamic=dynamic_data["y"],
             grp_dynamic=dynamic_data["groups"], sens_dynamic=dynamic_data["sensitive"],
             lmk_vals=dynamic_data["lmk_vals"],
-            group_names=GROUP_NAMES,
+            group_names=GROUP_NAMES_SIM,
             betas=cfg["grid_betas"], alphas=cfg["grid_alphas"],
             n_folds=cfg["n_folds"],
             eo_mode_d=cfg["eo_mode_d"],
