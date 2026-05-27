@@ -18,7 +18,11 @@ scenarios <- c("fair", "direct", "proxy", "temporal")
 wb <- createWorkbook()
 
 # --- Output folder with timestamp ---
-run_folder <- paste0("run_", format(Sys.time(), "%Y%m%d_%H%M%S"))
+run_folder <- paste0("run_", format(
+    as.POSIXct(Sys.time(), tz="Europe/Rome"), 
+    "%Y%m%d_%H%M%S"
+))
+
 dir.create(run_folder)
 cat("Output folder:", run_folder, "\n")
 

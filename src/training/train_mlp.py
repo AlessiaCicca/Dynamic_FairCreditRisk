@@ -132,9 +132,9 @@ def train_mlp(
 
 
             print(
-                f"  [{model_name}] epoch={epoch:3d}  "
-                f"L_bce={L_bce.item():.4f}  L_eo={L_eo.item():.4f}  "
-                f"loss={loss.item():.4f}  AUC_train={auc_tr:.4f}  "
+                f" epoch={epoch:3d}  ->  "
+                f"L_bce={L_bce.item():.4f} | L_eo={L_eo.item():.4f}  |  "
+                f"loss={loss.item():.4f} "
             )
 
             if sens_train is not None:
@@ -144,10 +144,7 @@ def train_mlp(
                     if mask.sum() > 0 and ytr[mask].sum() > 0:
                         tpr = ((p_tr_v[mask] >= 0.5) & (ytr[mask] == 1)).sum() / (ytr[mask] == 1).sum()
                         fpr = ((p_tr_v[mask] >= 0.5) & (ytr[mask] == 0)).sum() / (ytr[mask] == 0).sum()
-                        print(
-                            f"L_bce={L_bce.item():.4f}  L_eo={L_eo.item():.4f}  "
-                            f"loss={loss.item():.4f}  AUC_train={auc_tr:.4f}  "
-                            f"    {gname}: TPR={tpr:.3f}  FPR={fpr:.3f}")
+                        print( f" {gname}: TPR={tpr:.3f}  FPR={fpr:.3f}")
 
     # Inference
     model.eval()
@@ -155,18 +152,4 @@ def train_mlp(
         # Forward Pass + Converts logits to probabilities
         p_te = torch.sigmoid(model(X_test)).cpu().numpy()
         p_tr = torch.sigmoid(model(X_train)).cpu().numpy()
-
-    fair_type = (
-        "static"   if apply_fair_static  else
-        "dynamic"  if apply_fair_dynamic else
-        "none"
-    )
-    coeff = beta if apply_fair_static else alpha if apply_fair_dynamic else 0.0
-
-    # Mean on train and test set to evaluate overfitting
-    print(
-        f" eo={fair_type} |  coeff={coeff:.2f}  "
-        f"pred_mean_train={p_tr.mean():.4f}  "
-        f"pred_mean_test={p_te.mean():.4f}  "
-    )
     return p_te, p_tr, model, scaler

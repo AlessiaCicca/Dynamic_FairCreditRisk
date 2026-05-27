@@ -192,7 +192,7 @@ def run_fairness_analysis(
         time_col_dyn="landmark",
     )
     df_auc.to_csv(out_dir / "fairness_auc_comparison.csv", index=False)
-    print("\n=== AUC FAIRNESS ===")
+    print("\n--- AUC FAIRNESS ---")
     print(df_auc.to_string(index=False))
 
     # Plots
@@ -321,10 +321,6 @@ def main():
 
     # Grid search 
     if args.grid_search:
-        print("\n" + "="*60)
-        print("GRID SEARCH")
-        print("="*60)
-
         df_grid = run_grid_search(
             X_static=static_data["X"], y_static=static_data["y"],
             grp_static=static_data["groups"], sens_static=static_data["sensitive"],

@@ -80,7 +80,13 @@ def run_cv(X, y, groups, sensitive,
         best_th       = find_best_threshold(y[tr], p_tr)
         # compute AUC, Brier, F1 on test fold
         metrics_list.append(metrics_all(y[te].astype(int), p_te, threshold=best_th))
-        print(f"  Fold {fold + 1} — AUC: {metrics_list[-1]['AUC']:.4f}  th={best_th:.5f}")
+        print(
+            f"  Fold {fold + 1}  |  "
+            f"  pred_mean_train={p_tr.mean():.4f}  |  "
+            f"  pred_mean_test={p_te.mean():.4f}"
+            f"  |  AUC: {metrics_list[-1]['AUC']:.4f}  |  "
+            f"  th={best_th:.5f}"
+        )
 
        # last fold only: save model and scaler for inference on test sets
         if fold == n_splits - 1:

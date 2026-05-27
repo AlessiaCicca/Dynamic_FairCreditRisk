@@ -70,10 +70,10 @@ def print_fairness_report(model_name, res,group_names, label: str = "AGGREGATE")
 
     rows = [
         ("N observations",    "n",    ".0f"),
-        ("Base rate (prev.)", "prev", ".4f"),
-        ("TPR (recall)",      "tpr",  ".4f"),
+        ("Default rate", "prev", ".4f"),
+        ("TPR",      "tpr",  ".4f"),
         ("FPR",               "fpr",  ".4f"),
-        ("FNR (miss rate)",   "fnr",  ".4f"),
+        ("FNR",   "fnr",  ".4f"),
     ]
     for label_row, key, fmt in rows:
         vm = res[priv_name][key]

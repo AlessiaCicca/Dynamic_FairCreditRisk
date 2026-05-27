@@ -43,7 +43,7 @@ N_FOLDS = 5
 # Simulation dataset
 SCENARIO         = "fair"          # "fair" | "direct" | "proxy" | "temporal"
 HORIZON          = 3               # prediction horizon (periods)
-LANDMARKS        = list(range(1, 13))
+LANDMARKS_SIM        = list(range(1, 13))
 N_TEST_LANDMARKS = 12
 
 # Column names in simulation dataset
@@ -52,13 +52,13 @@ TIME_COL  = "Time"
 EVENT_COL = "Event"
 SENS_COL  = "S"
 
-STATIC_COLS  = ["X1", "X2"]
-TVC_COLS     = ["X3", "X4", "X6"]
-CAT_COLS     = ["X5"]
-ALL_NUM_COLS = STATIC_COLS + TVC_COLS
+STATIC_COLS_SIM  = ["X1", "X2"]
+TVC_COLS_SIM     = ["X3", "X4", "X6"]
+CAT_COLS_SIM     = ["X5"]
+ALL_NUM_COLS = STATIC_COLS_SIM + TVC_COLS_SIM
 
 ATTR_NAME   = "S"
-GROUP_NAMES = {0: "S0", 1: "S1"}
+GROUP_NAMES_SIM = {0: "S0", 1: "S1"}
 
 # Real dataset
 HORIZON_MONTHS = 12
