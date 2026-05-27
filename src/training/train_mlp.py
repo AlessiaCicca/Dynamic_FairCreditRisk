@@ -1,7 +1,5 @@
 """
-src/training/train_mlp.py
-
-Training loop for M_STATIC, M_DYNAMIC, and M_PP models.
+Training loop for M_STATIC and M_DYNAMIC models.
 Imports MLP from src.models.mlp and loss functions from src.losses.
 """
 
@@ -30,79 +28,71 @@ def train_mlp(
     time_tr=None,
     subj_ids_tr=None,
     model_name="",
-    # architecture
     hidden1=64,
     hidden2=32,
     dropout=0.3,
-    # optimiser
     lr=1e-3,
     weight_decay=1e-4,
     n_epochs=200,
     patience=30,
     min_lr=1e-5,
     pw_clip=20.0,
-    # fairness coefficients
     beta=0.0,    # M_STATIC
     alpha=0.0,   # M_DYNAMIC
-    # EO loss options
     eo_mode_d="mean",
     schedule_mode_d="flat",
-    # misc
     verbose=False,
 ):
 
 
-    # Preprocessing
+    # Preprocessing -> StandardScaler (mean=0 and std=1) due to the different scale of the features
+    # Fit on the training set and transform on the test set
     scaler = StandardScaler()
-    Xtr_s = np.nan_to_num(
-        scaler.fit_transform(Xtr).astype(np.float32),
-        nan=0., posinf=5., neginf=-5.,
-    )
-    Xte_s = np.nan_to_num(
-        scaler.transform(Xte).astype(np.float32),
-        nan=0., posinf=5., neginf=-5.,
-    )
-
+    Xtr_s = np.nan_to_num(scaler.fit_transform(Xtr).astype(np.float32),
+        nan=0., posinf=5., neginf=-5.,)
+    Xte_s = np.nan_to_num(scaler.transform(Xte).astype(np.float32),
+        nan=0., posinf=5., neginf=-5.,)
+ 
+    # PyTorch tensor conversion
     X_train = torch.tensor(Xtr_s, device=DEVICE)
     y_train = torch.tensor(ytr.astype(np.float32), device=DEVICE)
     X_test  = torch.tensor(Xte_s, device=DEVICE)
+    sens_train = ( torch.tensor(sensitive_tr.astype(np.float32), device=DEVICE)
+        if sensitive_tr is not None else None)
+    time_train = (torch.tensor(time_tr.astype(np.float32), device=DEVICE)
+        if time_tr is not None else None)
 
-    sens_train = (
-        torch.tensor(sensitive_tr.astype(np.float32), device=DEVICE)
-        if sensitive_tr is not None else None
-    )
-    time_train = (
-        torch.tensor(time_tr.astype(np.float32), device=DEVICE)
-        if time_tr is not None else None
-    )
-
- 
+    # Class-weight: the pos_weight gives more weight to the minority class (default) 
+    # during training, and the clip avoids exaggerating this weight when the imbalance is extreme.
     n_pos = max((ytr == 1).sum(), 1)
     n_neg = max((ytr == 0).sum(), 1)
-    pw    = float(np.clip(n_neg / n_pos, 1.0, pw_clip))
+    pw    = float(np.clip(n_neg / n_pos, 1.0, pw_clip))   
     pos_w = torch.tensor([pw], dtype=torch.float32, device=DEVICE)
 
-
+    # Model Initialization
     model     = MLP(X_train.shape[1], hidden1, hidden2, dropout).to(DEVICE)
     model.init_bias(prev=float(ytr.mean()))
     criterion = nn.BCEWithLogitsLoss(pos_weight=pos_w)
-
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", patience=patience, factor=0.5, min_lr=min_lr
-    )
+        optimizer, mode="min", patience=patience, factor=0.5, min_lr=min_lr)
 
     apply_fair_static  = (model_name == "static")        and (sens_train is not None)
     apply_fair_dynamic = (model_name == "dynamic")       and (sens_train is not None) and (time_train is not None)
 
     # Training loop
-    model.train()
+    model.train()  
     for epoch in range(n_epochs):
+        # Resets the accumulated gradients from the previous step
         optimizer.zero_grad()
+        # Forward pass — passes all data through the network and gets the logits
         logits  = model(X_train)
+        # Binary Cross Entropy
         L_bce   = criterion(logits, y_train)
+        # Initialization of the fairness loss
         L_eo    = torch.tensor(0.0, device=DEVICE)
-        apply_eo = epoch > 20   # warmup: let BCE learn first
+        # Warmup let BCE learn first
+        apply_eo = epoch > 20   
 
         if apply_fair_static and apply_eo:
             L_eo = equalized_odds_loss(logits, sens_train, y_train)
@@ -111,38 +101,40 @@ def train_mlp(
         elif apply_fair_dynamic and apply_eo:
             L_eo = equalized_odds_loss_dynamic(
                 logits, sens_train, y_train, time_train,
-                mode=eo_mode_d,
-                current_epoch=epoch,
-                time_schedule_mode=schedule_mode_d,
-            )
+                mode=eo_mode_d, current_epoch=epoch,
+                time_schedule_mode=schedule_mode_d)
             loss = (1 - alpha) * L_bce + alpha * L_eo
 
         else:
             loss = L_bce
 
         if not torch.isfinite(loss):
-            print(f"  [WARN] Non-finite loss at epoch {epoch} — stopping.")
             break
 
+        # Backpropagation 
         loss.backward()
+        # Gradient clipping 
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+        # Weight update with Adam
         optimizer.step()
+        # Learning rate update
         scheduler.step(loss.detach())
 
         if verbose and (epoch % 20 == 0 or epoch == n_epochs - 1):
             with torch.no_grad():
+                # Converts logits to probabilities
                 p_tr_v = torch.sigmoid(logits).cpu().numpy()
+            # To manage situation with single classes for fold
             try:
                 auc_tr = roc_auc_score(ytr, p_tr_v)
             except Exception:
                 auc_tr = float("nan")
 
-            # Questo è il grande print
+
             print(
                 f"  [{model_name}] epoch={epoch:3d}  "
                 f"L_bce={L_bce.item():.4f}  L_eo={L_eo.item():.4f}  "
                 f"loss={loss.item():.4f}  AUC_train={auc_tr:.4f}  "
-                f"lr={optimizer.param_groups[0]['lr']:.2e}"
             )
 
             if sens_train is not None:
@@ -152,29 +144,29 @@ def train_mlp(
                     if mask.sum() > 0 and ytr[mask].sum() > 0:
                         tpr = ((p_tr_v[mask] >= 0.5) & (ytr[mask] == 1)).sum() / (ytr[mask] == 1).sum()
                         fpr = ((p_tr_v[mask] >= 0.5) & (ytr[mask] == 0)).sum() / (ytr[mask] == 0).sum()
-                        print(f"    {gname}: TPR={tpr:.3f}  FPR={fpr:.3f}")
-                sep = abs(
-                    ((p_tr_v[s == 1] >= 0.5) & (ytr[s == 1] == 1)).sum() / max((ytr[s == 1] == 1).sum(), 1) -
-                    ((p_tr_v[s == 0] >= 0.5) & (ytr[s == 0] == 1)).sum() / max((ytr[s == 0] == 1).sum(), 1)
-                )
-                print(f"    δTPR={sep:.3f}  Eq.Odds={L_eo.item():.4f}")
+                        print(
+                            f"L_bce={L_bce.item():.4f}  L_eo={L_eo.item():.4f}  "
+                            f"loss={loss.item():.4f}  AUC_train={auc_tr:.4f}  "
+                            f"    {gname}: TPR={tpr:.3f}  FPR={fpr:.3f}")
 
     # Inference
     model.eval()
     with torch.no_grad():
+        # Forward Pass + Converts logits to probabilities
         p_te = torch.sigmoid(model(X_test)).cpu().numpy()
         p_tr = torch.sigmoid(model(X_train)).cpu().numpy()
 
     fair_type = (
         "static"   if apply_fair_static  else
-        eo_mode_d  if apply_fair_dynamic else
+        "dynamic"  if apply_fair_dynamic else
         "none"
     )
     coeff = beta if apply_fair_static else alpha if apply_fair_dynamic else 0.0
+
+    # Mean on train and test set to evaluate overfitting
     print(
-        f"  [{model_name}|eo={fair_type}]  "
+        f" eo={fair_type} |  coeff={coeff:.2f}  "
         f"pred_mean_train={p_tr.mean():.4f}  "
         f"pred_mean_test={p_te.mean():.4f}  "
-        f"pos_weight={pw:.2f}  coeff={coeff:.2f}"
     )
     return p_te, p_tr, model, scaler
