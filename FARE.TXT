@@ -1,4 +1,5 @@
-Aggiungere e sistemare codice preprocessing
+EDA del file clean
 Migliorare feature engineering e model
 Controlla questione validation set
 CHECK COLONNE CONSIDERATE nel sampling
+riattaccare wand db
