@@ -210,7 +210,6 @@ def main():
         f"_S:{cfg['beta']}"
         f"_D:{cfg['alpha']}_{cfg['eo_mode_d']}"
     )
-    run_tag="prova"
 
     if cfg["use_wandb"]:
         import wandb

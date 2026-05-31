@@ -9,6 +9,7 @@ builds the two datasets, runs CV, fairness analysis, and grid search.
 import argparse
 import gc
 import os
+from re import I
 import time
 import warnings
 from pathlib import Path
@@ -38,7 +39,7 @@ from config import (
     STATIC_COLS_SIM, TVC_COLS_SIM, CAT_COLS_SIM, ALL_NUM_COLS,
     ATTR_NAME, GROUP_NAMES_SIM,
     N_FOLDS, USE_WANDB, WANDB_ENTITY, WANDB_PROJECT,
-    GRID_BETAS, GRID_ALPHAS,
+    GRID_BETAS, GRID_ALPHAS, N_EPOCHS,LR, PW_CLIP,
 )
 from src.data.build_static        import build_static
 from src.data.build_dynamic       import build_dynamic
@@ -213,7 +214,9 @@ def run_fairness_analysis(
                           filename="fairness_auc_comparison.png")
 
     print(f"\n Fairness outputs saved in: {out_dir}")
-    return dict(df_agg=df_agg, df_dyn_lmk=df_dyn_lmk, df_auc=df_auc)
+    return df_agg, df_dyn_lmk, df_auc
+
+ 
 
 
 
@@ -231,6 +234,26 @@ def main():
         f"_S:{cfg['beta']}"
         f"_D:{cfg['alpha']}_{cfg['eo_mode_d']}"
     )
+
+    if cfg["use_wandb"]:
+      import wandb
+      wandb.init(
+          project = WANDB_PROJECT,
+          entity  = WANDB_ENTITY,
+          name    = run_tag,
+          config  = {
+              "beta":            cfg["beta"],
+              "alpha":           cfg["alpha"],
+              "eo_mode_d":       cfg["eo_mode_d"],
+              "schedule_mode_d": cfg["schedule_mode_d"],
+              "horizon":         cfg["horizon"],
+              "n_folds":         cfg["n_folds"],
+              "landmarks":       cfg["landmarks"],
+              "n_epochs":        N_EPOCHS,
+              "lr":              LR,
+              "pw_clip":         PW_CLIP,
+          }
+      )
 
     print(f"\n{'='*60}")
     print(f"  Scenario : {args.scenario}")
@@ -302,13 +325,27 @@ def main():
     print(summary.to_string(index=False))
     summary.to_csv(out_dir / "cv_results.csv", index=False)
 
+    if cfg["use_wandb"]:
+        import wandb
+        for _, row in summary.iterrows():
+            m = row["Model"].lower()
+            wandb.log({
+                f"{m}/AUC_Mean":   row["AUC_Mean"],
+                f"{m}/AUC_SD":     row["AUC_SD"],
+                f"{m}/Brier_Mean": row["Brier_Mean"],
+                f"{m}/Brier_SD":   row["Brier_SD"],
+                f"{m}/F1_Mean":    row["F1_Mean"],
+                f"{m}/F1_SD":      row["F1_SD"],
+            })
+
+
 
     # Fairness analysis 
     print("\n" + "="*60)
     print("FAIRNESS ANALYSIS")
     print("="*60)
 
-    run_fairness_analysis(
+    df_agg, df_dyn_lmk, df_auc=run_fairness_analysis(
         y_static=static_data["y"],
         static_oof=res_static["oof_preds"],
         sens_static=static_data["sensitive"],
@@ -318,6 +355,44 @@ def main():
         lmk_vals=dynamic_data["lmk_vals"],
         out_dir=out_dir, cfg=cfg,
     )
+
+    if cfg["use_wandb"]:
+        import wandb
+        # Aggregate fairness
+        for _, row in df_agg.iterrows():
+            prefix = f"{row['model'].lower()}/aggregate"
+            wandb.log({
+                f"{prefix}/separation":   row.get("separation"),
+                f"{prefix}/independence": row.get("independence"),
+                f"{prefix}/sufficiency":  row.get("sufficiency"),
+            })
+
+        # AUC fairness
+        for _, row in df_auc.iterrows():
+            m = row["metric"]
+            wandb.log({
+                f"auc_fairness/{m}/M_STATIC":  row["AUC_M_STATIC"],
+                f"auc_fairness/{m}/M_DYNAMIC": row["AUC_M_DYNAMIC"],
+            })
+
+        # Dynamic per landmark
+        for _, row in df_dyn_lmk.iterrows():
+            L = int(row["landmark"])
+            wandb.log({
+                f"dynamic/landmark_{L}/separation":   row.get("separation"),
+                f"dynamic//landmark_{L}/independence": row.get("independence"),
+            })
+
+        img_path = out_dir / f"fairness_auc_.png"
+        if img_path.exists():
+            wandb.log({f"fairness_plot": wandb.Image(str(img_path))})
+        
+        sep_plot = out_dir / "fairness_dynamic_by_landmark.png"
+        if sep_plot.exists():
+            wandb.log({"fairness_separation_plot": wandb.Image(str(sep_plot))})
+
+        wandb.finish()
+
 
     # Grid search 
     if args.grid_search:
