@@ -42,7 +42,7 @@ PIPELINE_COLS = [
 ]
 
 RAW_COLS = (PIPELINE_COLS + STATIC_COLS + 
-    [c for c in TVC_COLS if c != "bd_pct"] + 
+    [c for c in TVC_COLS if c != "bd_pct"and c !="current_upb_delta" ] + 
     CAT_COLS)
 
 NUMERIC_COLS = [
@@ -78,7 +78,7 @@ VALID_RANGES = {
 
 VALID_VALUES = {
     "first_time_homebuyer":   ["Y", "N"],
-    "assistance_code": ["F","R","T"],
+    "borrower_assistance_status": ["F","R","T"],
     "occupancy_status_orig":  ["P", "I", "S"],  
     "loan_purpose_orig":      ["P", "C", "N", "R"],  
 }
@@ -131,6 +131,8 @@ def replace_missing_codes(df):
 def replace_invalid_ranges(df):
     # Numerical Range
     for col, ranges in VALID_RANGES.items():
+        if col in df.columns and df[col].dtype == object:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
         if col not in df.columns:
             continue
         n_before   = df[col].notna().sum()
@@ -161,6 +163,13 @@ def convert_numerics(df):
             df[c] = pd.to_numeric(df[c], errors="coerce").astype("float32")
     return df
 
+# Encoding first_time_homebuyer
+def encode_first_time_homebuyer(df):
+    if "first_time_homebuyer" in df.columns:
+        df["first_time_homebuyer"] = df["first_time_homebuyer"].map(
+            {"Y": 1, "N": 0}
+        )
+    return df
 
 # Outlier capping
 def cap_outliers(df, lower=0.01, upper=0.99):
@@ -174,13 +183,6 @@ def cap_outliers(df, lower=0.01, upper=0.99):
         p_low  = df[col].quantile(lower)
         p_high = df[col].quantile(upper)
         df[col] = df[col].clip(p_low, p_high)
-    return df
-
-# Fill nan with the previous observation for TVC -  Peng & Lessmann (2026)
-def fill_tvc_missing(df):
-    tvc_fill = [c for c in TVC_COLS if c != "bd_pct"]
-    df = df.sort_values(["loan_sequence_number", "loan_age"])
-    df[tvc_fill] = df.groupby("loan_sequence_number")[tvc_fill].ffill()
     return df
 
 
@@ -293,6 +295,9 @@ def propagate_demographics(df):
             continue
         per_loan = df.groupby("loan_sequence_number")[col].first().rename(name)
         df = df.merge(per_loan, on="loan_sequence_number", how="left")
+    cols_to_drop = ["derived_sex", "derived_race", "applicant_age",
+                    "sex_bin", "race_bin", "age_bin"]
+    df = df.drop(columns=[c for c in cols_to_drop if c in df.columns])
     return df
 
 
@@ -309,8 +314,9 @@ def preprocess(path_in, path_out):
     df = load_panel(path_in)
     df = replace_missing_codes(df)
     df = replace_invalid_ranges(df)
+    df = encode_first_time_homebuyer(df)
     df = convert_numerics(df)
-    df = fill_tvc_missing(df) 
+    df = compute_upb_delta(df)
     df = cap_outliers(df)
     df = compute_bd_pct(df)
     df = compute_trends(df)

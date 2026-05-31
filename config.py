@@ -69,13 +69,13 @@ STATIC_COLS = [
     "interest_rate", "loan_term", "num_borrowers", "loan_amount"
 ]
 TVC_COLS = [
-    "current_upb", "current_interest_rate", "estimated_ltv", "bd_pct", "assistance_code"
+    "current_upb", "current_interest_rate", "estimated_ltv", "bd_pct", "current_upb_delta"
 ]
-CAT_COLS = ["occupancy_status_orig", "loan_purpose_orig"]
+CAT_COLS = ["occupancy_status_orig", "loan_purpose_orig", "borrower_assistance_status"]
 
 FAIR_ATTR   = "SEX"    # "SEX" | "RACE" | "AGE"
 GROUP_NAMES = {
-    "SEX":  {0: "Male",        1: "Female"},
+    "SEX":  {0: "Male/Joint",        1: "Female"},
     "RACE": {0: "White/Asian", 1: "Black/Indian"},
     "AGE":  {0: "Old",         1: "Young"},
 }
