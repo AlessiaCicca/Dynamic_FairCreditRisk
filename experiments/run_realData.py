@@ -92,7 +92,70 @@ def load_config(config_path):
             overrides = yaml.safe_load(f)
         cfg.update(overrides or {})
     return cfg
+def run_feature_importance(static_data, dynamic_data, out_dir, use_wandb=False):
+    """
+    Compute feature importance using LightGBM + SHAP.
+    Runs on both static and dynamic datasets.
+    """
+    import lightgbm as lgb
+    import shap
+    import matplotlib.pyplot as plt
 
+    print("\n" + "="*60)
+    print("FEATURE IMPORTANCE")
+    print("="*60)
+
+    for name, data in [("M_STATIC", static_data), ("M_DYNAMIC", dynamic_data)]:
+        print(f"\n--- {name} ---")
+
+        X            = data["X"]
+        y            = data["y"]
+        feature_names = data["feature_names"]
+
+        # Train LightGBM veloce
+        model = lgb.LGBMClassifier(
+            n_estimators=200,
+            learning_rate=0.05,
+            num_leaves=31,
+            random_state=42,
+            verbose=-1,
+        )
+        model.fit(X, y)
+
+        # SHAP values
+        explainer   = shap.TreeExplainer(model)
+        shap_values = explainer.shap_values(X)
+        if isinstance(shap_values, list):
+            shap_values = shap_values[1]
+
+        # Mean absolute SHAP per feature
+        mean_shap = np.abs(shap_values).mean(axis=0)
+        df_imp = pd.DataFrame({
+            "feature":    feature_names,
+            "importance": mean_shap,
+        }).sort_values("importance", ascending=False)
+
+        print(df_imp.to_string(index=False))
+        df_imp.to_csv(out_dir / f"feature_importance_{name.lower()}.csv", index=False)
+
+        # Plot — top 20 features per leggibilità
+        top = df_imp.head(20)
+        fig, ax = plt.subplots(figsize=(10, 7))
+        ax.barh(top["feature"][::-1], top["importance"][::-1], color="#4C72B0")
+        ax.set_xlabel("Mean |SHAP value|")
+        ax.set_title(f"Feature Importance (SHAP) — {name} (top 20)")
+        ax.grid(axis="x", alpha=0.3)
+        plt.tight_layout()
+        plot_path = out_dir / f"feature_importance_{name.lower()}.png"
+        plt.savefig(plot_path, dpi=150)
+        plt.close(fig)
+        print(f"  Saved: {plot_path}")
+
+        if use_wandb:
+            import wandb
+            wandb.log({f"feature_importance/{name}": wandb.Image(str(plot_path))})
+            wandb.log({f"shap/{name}/{row['feature']}": row["importance"]
+                       for _, row in df_imp.iterrows()})
 
 #  Fairness analysis 
 def run_fairness_analysis(
@@ -249,7 +312,7 @@ def main():
     
     df["sens_loan"] = df[sens_col_map[args.fair_attr]] 
 
-    trend_cols = ["bd_pct_trend", "estimated_ltv_trend", "current_upb_trend"]
+    #trend_cols = ["bd_pct_trend", "estimated_ltv_trend", "current_upb_trend"]
 
     enc_cat = OneHotEncoder(handle_unknown="ignore",
                              sparse_output=False, dtype=np.float32)
@@ -340,7 +403,13 @@ def main():
                 f"{m}/F1_SD":      row["F1_SD"],
             })
 
-
+    #run_feature_importance(
+    #    static_data  = static_data,
+    #    dynamic_data = dynamic_data,
+    #    out_dir      = out_dir,
+    #    use_wandb    = cfg["use_wandb"],
+    #)
+    
     # Fairness analysis
     print("\n" + "="*60)
     print("FAIRNESS ANALYSIS")
