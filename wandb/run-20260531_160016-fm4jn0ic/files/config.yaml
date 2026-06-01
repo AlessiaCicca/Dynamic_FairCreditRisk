@@ -1,0 +1,99 @@
+_wandb:
+    value:
+        cli_version: 0.27.0
+        e:
+            a4gwo3f264p8ratv6ei9lh1672asdwqk:
+                args:
+                    - --data_path
+                    - /content/drive/MyDrive/panel_cleaned.csv
+                    - --config
+                    - experiments/configs/realData.yaml
+                codePath: experiments/run_realData.py
+                codePathLocal: experiments/run_realData.py
+                cpu_count: 1
+                cpu_count_logical: 2
+                cudaVersion: "13.0"
+                disk:
+                    /:
+                        total: "120942624768"
+                        used: "50612518912"
+                email: alessia.ciccaglione02@gmail.com
+                executable: /usr/bin/python3
+                git:
+                    commit: 2b074d18817e8a0e1008644c6957d97cd86db95e
+                    remote: https://github.com/AlessiaCicca/DynamicSurvival_FairCreditScoring.git
+                gpu: Tesla T4
+                gpu_count: 1
+                gpu_nvidia:
+                    - architecture: Turing
+                      cudaCores: 2560
+                      memoryTotal: "16106127360"
+                      name: Tesla T4
+                      uuid: GPU-045efcf5-815e-12e3-e2c6-fa1ce650353f
+                host: c6d9c28a0c93
+                memory:
+                    total: "13605830656"
+                os: Linux-6.6.122+-x86_64-with-glibc2.35
+                program: /content/DynamicSurvival_FairCreditScoring/experiments/run_realData.py
+                python: CPython 3.12.13
+                root: /content/DynamicSurvival_FairCreditScoring
+                startedAt: "2026-05-31T16:00:16.934063Z"
+                writerId: a4gwo3f264p8ratv6ei9lh1672asdwqk
+        m: []
+        python_version: 3.12.13
+        t:
+            "1":
+                - 1
+                - 5
+                - 53
+            "2":
+                - 1
+                - 5
+                - 53
+            "3":
+                - 2
+                - 13
+                - 16
+            "4": 3.12.13
+            "5": 0.27.0
+            "12": 0.27.0
+            "13": linux-x86_64
+alpha:
+    value: 0
+beta:
+    value: 0
+eo_mode_d:
+    value: trend_aware
+fair_attr:
+    value: SEX
+horizon:
+    value: 12
+landmarks:
+    value:
+        - 0
+        - 3
+        - 6
+        - 9
+        - 12
+        - 15
+        - 18
+        - 21
+        - 24
+        - 27
+        - 30
+        - 33
+        - 36
+        - 39
+        - 42
+        - 45
+        - 48
+lr:
+    value: 0.001
+n_epochs:
+    value: 200
+n_folds:
+    value: 5
+pw_clip:
+    value: 20
+schedule_mode_d:
+    value: decay

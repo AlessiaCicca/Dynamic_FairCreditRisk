@@ -55,6 +55,8 @@ def _run_cv(
     # Empty Array to save OOF predictions
     oof_preds = np.zeros(len(y), dtype=np.float64)
 
+    thresholds = []
+
     # For each fold: train the model on the train, predict on the test
     for tr_idx, te_idx in gkf.split(X, y, grp):
         time_tr = time_arr[tr_idx] if time_arr is not None else None
@@ -70,9 +72,13 @@ def _run_cv(
             verbose         = False,
         )
         oof_preds[te_idx] = p_te
+        # Find the threshold that maximize F1
+        best_th = find_best_threshold(y[tr_idx], p_tr)
+        thresholds.append(best_th)
         
-    # Find the threshold that maximize F1
-    th = find_best_threshold(y.astype(int), oof_preds)
+
+
+    th = float(np.mean(thresholds)) 
 
     # Mean OOF AUC
     fold_aucs = []

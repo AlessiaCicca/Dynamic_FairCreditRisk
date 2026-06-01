@@ -1,0 +1,45 @@
+{
+  "os": "Linux-6.6.122+-x86_64-with-glibc2.35",
+  "python": "CPython 3.12.13",
+  "startedAt": "2026-05-31T16:04:50.447058Z",
+  "args": [
+    "--data_path",
+    "/content/drive/MyDrive/panel_cleaned.csv",
+    "--config",
+    "experiments/configs/realData.yaml"
+  ],
+  "program": "/content/DynamicSurvival_FairCreditScoring/experiments/run_realData.py",
+  "codePath": "experiments/run_realData.py",
+  "codePathLocal": "experiments/run_realData.py",
+  "git": {
+    "remote": "https://github.com/AlessiaCicca/DynamicSurvival_FairCreditScoring.git",
+    "commit": "2b074d18817e8a0e1008644c6957d97cd86db95e"
+  },
+  "root": "/content/DynamicSurvival_FairCreditScoring",
+  "host": "c6d9c28a0c93",
+  "executable": "/usr/bin/python3",
+  "cpu_count": 1,
+  "cpu_count_logical": 2,
+  "gpu": "Tesla T4",
+  "gpu_count": 1,
+  "disk": {
+    "/": {
+      "total": "120942624768",
+      "used": "51176337408"
+    }
+  },
+  "memory": {
+    "total": "13605830656"
+  },
+  "gpu_nvidia": [
+    {
+      "name": "Tesla T4",
+      "memoryTotal": "16106127360",
+      "cudaCores": 2560,
+      "architecture": "Turing",
+      "uuid": "GPU-045efcf5-815e-12e3-e2c6-fa1ce650353f"
+    }
+  ],
+  "cudaVersion": "13.0",
+  "writerId": "9j1rn2h811dimfktwh3wa5y9v5hu1jub"
+}

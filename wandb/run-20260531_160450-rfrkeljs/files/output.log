@@ -1,0 +1,29 @@
+
+============================================================
+  Dataset   :  REAL
+  Attr      : SEX
+============================================================
+Traceback (most recent call last):
+  File "/content/DynamicSurvival_FairCreditScoring/experiments/run_realData.py", line 425, in <module>
+    main()
+  File "/content/DynamicSurvival_FairCreditScoring/experiments/run_realData.py", line 242, in main
+    df = pd.read_csv(args.data_path, low_memory=False)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/pandas/io/parsers/readers.py", line 1026, in read_csv
+    return _read(filepath_or_buffer, kwds)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/pandas/io/parsers/readers.py", line 626, in _read
+    return parser.read(nrows)
+           ^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/pandas/io/parsers/readers.py", line 1923, in read
+    ) = self._engine.read(  # type: ignore[attr-defined]
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/pandas/io/parsers/c_parser_wrapper.py", line 239, in read
+    data = self._reader.read(nrows)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "parsers.pyx", line 820, in pandas._libs.parsers.TextReader.read
+  File "parsers.pyx", line 914, in pandas._libs.parsers.TextReader._read_rows
+  File "parsers.pyx", line 891, in pandas._libs.parsers.TextReader._check_tokenize_status
+  File "parsers.pyx", line 2053, in pandas._libs.parsers.raise_parser_error
+  File "<frozen codecs>", line 331, in getstate
+KeyboardInterrupt
