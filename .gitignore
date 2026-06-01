@@ -3,6 +3,7 @@
 # =========================
 data_generation/simulation/run_*/
 outputs/
+wandb/
 
 # CSV e dati generati
 *.csv
