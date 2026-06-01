@@ -51,7 +51,7 @@ def equalized_odds_loss_dynamic(
             s  = sensitive[mask]
             lt = label_true[mask]
 
-            valid = ~torch.isnan(s)
+            valid = (s == 0) | (s == 1)
             if valid.sum() == 0:
                 continue
             lp = torch.sigmoid(lp[valid])
