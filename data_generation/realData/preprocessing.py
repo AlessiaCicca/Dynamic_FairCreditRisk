@@ -1,7 +1,7 @@
 """
 Preprocessing pipeline for real data analysis.
-Input:  panel_sampled.csv  (100k loans, longitudinal, raw)
-Output: panel_clean.csv    (ready for build_static / build_dynamic)
+Input:  panel_sampled.csv  
+Output: panel_clean.csv    
 
 Steps:
     1. Load raw panel (select relevant columns)
