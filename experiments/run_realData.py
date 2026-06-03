@@ -330,13 +330,6 @@ def main():
         first_event_col="FirstDefaultAge",
         sens_col="sens_loan", enc_cat=enc_cat,
     )
-    print(f"[STATIC DIAGNOSTIC]")
-    print(f"  grp_static unique: {len(np.unique(static_data['groups']))}")
-    print(f"  y_static pos: {static_data['y'].sum()}")
-    print(f"  y_static prev: {static_data['y'].mean():.4f}")
-    print(f"  X_static shape: {static_data['X'].shape}")
-    print(f"  X_static mean: {static_data['X'].mean():.4f}")
-
 
     print("\nBuilding DYNAMIC dataset...")
     dynamic_data = build_dynamic(
@@ -348,15 +341,6 @@ def main():
         first_event_col="FirstDefaultAge",
         sens_col="sens_loan", enc_cat=enc_cat,
     )
-    # aggiungi dopo build_dynamic nel run_realData.py
-    print(f"sensitive dtype: {dynamic_data['sensitive'].dtype}")
-    print(f"sensitive unique: {pd.Series(dynamic_data['sensitive']).value_counts(dropna=False).head()}")
-
-
-    X_dynamic        = dynamic_data["X"]
-    y_dynamic        = dynamic_data["y"]
-    sensitive_dynamic = dynamic_data["sensitive"]
-    lmk_vals         = dynamic_data["lmk_vals"]
 
 
     # Collect sensitive arrays for all attributes

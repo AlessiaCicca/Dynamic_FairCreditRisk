@@ -13,7 +13,7 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 SEED = 42
 
 # Fairness penalty coefficients 
-BETA  = 0.5   # M_STATIC  EO penalty weight
+BETA  = 0.3   # M_STATIC  EO penalty weight
 ALPHA = 1   # M_DYNAMIC EO penalty weight
 
 # EO penalty mode
