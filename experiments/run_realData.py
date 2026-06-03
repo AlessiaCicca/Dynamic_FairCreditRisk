@@ -334,13 +334,23 @@ def main():
     print("\nBuilding DYNAMIC dataset...")
     dynamic_data = build_dynamic(
         df=df,
-        static_cols=STATIC_COLS, tvc_cols=TVC_COLS+trend_cols,
+        static_cols=STATIC_COLS, tvc_cols=TVC_COLS,
         cat_cols=CAT_COLS, landmarks=cfg["landmarks"],
         horizon=cfg["horizon"],
         id_col="loan_sequence_number", time_col="loan_age",
         first_event_col="FirstDefaultAge",
         sens_col="sens_loan", enc_cat=enc_cat,
     )
+    # aggiungi dopo build_dynamic nel run_realData.py
+    print(f"sensitive dtype: {dynamic_data['sensitive'].dtype}")
+    print(f"sensitive unique: {pd.Series(dynamic_data['sensitive']).value_counts(dropna=False).head()}")
+
+
+    X_dynamic        = dynamic_data["X"]
+    y_dynamic        = dynamic_data["y"]
+    sensitive_dynamic = dynamic_data["sensitive"]
+    lmk_vals         = dynamic_data["lmk_vals"]
+
 
     # Collect sensitive arrays for all attributes
     static_sens_by_attr = {}

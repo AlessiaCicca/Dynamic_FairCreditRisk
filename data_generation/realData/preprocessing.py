@@ -36,7 +36,7 @@ PIPELINE_COLS = [
     "loan_sequence_number",               # ID
     "loan_age",                           # Time
     "current_loan_delinquency_status",    
-    "derived_sex",                 
+    "applicant_sex",                 
     "derived_race",                    
     "applicant_age",                   
 ]
@@ -255,13 +255,17 @@ def compute_first_default_age(df):
 
 # Demographics → binary
 def encode_demographics(df):
- 
-    # Sex
-    if "derived_sex" in df.columns:
-        df["sex_bin"] = df["derived_sex"].str.lower().str.strip().map(
-            {"male": 0, "female": 1}
+    '''
+      # Sex
+      if "derived_sex" in df.columns:
+          df["sex_bin"] = df["derived_sex"].str.lower().str.strip().map(
+              {"male": 0, "female": 1}
+          )
+    '''
+    if "applicant_sex" in df.columns:
+        df["sex_bin"] = pd.to_numeric(df["applicant_sex"], errors="coerce").map(
+            {1.0: 0, 2.0: 1}  # 1=Male→0, 2=Female→1, 3/6→NaN
         )
-
     # Race
     def race_map(x):
         if not isinstance(x, str): return np.nan

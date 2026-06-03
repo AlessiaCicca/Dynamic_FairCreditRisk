@@ -75,8 +75,9 @@ def build_dynamic(
     # Extracts vectors needed for training
     y         = landmark_df["future_event"].to_numpy(dtype=np.int8)
     groups    = landmark_df[id_col].to_numpy()
-    sensitive = landmark_df[sens_col].to_numpy()
+    sensitive = landmark_df[sens_col].to_numpy(dtype=np.float64)
     lmk_vals  = landmark_df["landmark"].to_numpy()
+    
 
     # List of all column names
     feature_names = static_cols + tvc_cols + cat_feature_names + lmk_feature_names

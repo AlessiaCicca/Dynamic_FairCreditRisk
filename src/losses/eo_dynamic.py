@@ -51,9 +51,12 @@ def equalized_odds_loss_dynamic(
             s  = sensitive[mask]
             lt = label_true[mask]
 
-            valid = (s == 0) | (s == 1)
+            valid = ~torch.isnan(s)
             if valid.sum() == 0:
                 continue
+
+            
+
             lp = torch.sigmoid(lp[valid])
             s  = s[valid]; lt = lt[valid]
 
@@ -76,6 +79,12 @@ def equalized_odds_loss_dynamic(
             fpr_gap = torch.abs(fpr_s1 - fpr_s0)
             fnr_gap = torch.abs(fnr_s1 - fnr_s0)
             eo_t    = fpr_gap + fnr_gap
+
+
+            if current_epoch % 20 == 0:
+              print(f"    t={t.item():.0f} fpr_s1={fpr_s1:.4f} fpr_s0={fpr_s0:.4f} "
+                    f"fnr_s1={fnr_s1:.4f} fnr_s0={fnr_s0:.4f} eo_t={eo_t:.4f} "
+                    f"n_s0={n_s0} n_s1={n_s1}")
 
 
             if torch.isfinite(eo_t):
@@ -109,7 +118,7 @@ def equalized_odds_loss_dynamic(
         loss_gap = (eo_stack * gap_w).sum()
 
         return (1 - trend_weight) * loss_gap + trend_weight * trend_loss
-  else:
+  else: 
           eps = 1e-10
           unique_times = torch.unique(time_vals)
 

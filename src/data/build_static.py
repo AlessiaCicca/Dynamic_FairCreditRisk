@@ -45,7 +45,7 @@ def build_static(
     # Extracts vectors needed for training
     y         = static_df["target_static"].to_numpy(dtype=np.int8)
     groups    = static_df[id_col].to_numpy()
-    sensitive = static_df[sens_col].to_numpy()
+    sensitive = static_df[sens_col].to_numpy(dtype=np.float64)
 
     # List of all column names
     feature_names = static_cols + cat_feature_names
