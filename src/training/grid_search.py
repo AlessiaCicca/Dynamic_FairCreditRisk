@@ -60,7 +60,7 @@ def _run_cv(
     # For each fold: train the model on the train, predict on the test
     for tr_idx, te_idx in gkf.split(X, y, grp):
         time_tr = time_arr[tr_idx] if time_arr is not None else None
-        p_te, _, _, _ = train_mlp(
+        p_te, p_tr, _, _ = train_mlp(
             X[tr_idx], y[tr_idx], X[te_idx], y[te_idx],
             sensitive_tr    = sens[tr_idx],
             time_tr         = time_tr,

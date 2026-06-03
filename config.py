@@ -14,7 +14,7 @@ SEED = 42
 
 # Fairness penalty coefficients 
 BETA  = 0.5   # M_STATIC  EO penalty weight
-ALPHA = 0.5    # M_DYNAMIC EO penalty weight
+ALPHA = 1   # M_DYNAMIC EO penalty weight
 
 # EO penalty mode
 # Options: "mean" | "weighted" | "trend_aware" | "weighted+trend"
@@ -22,7 +22,7 @@ EO_MODE_D = "trend_aware"   # dynamic model
 
 # Time schedule mode (alpha_schedule)
 # Options: "flat" | "decay" | "growth" | "u_shaped" | "early_focus"
-SCHEDULE_MODE_D = "decay"
+SCHEDULE_MODE_D = "flat"
 
 # MLP architecture 
 HIDDEN1  = 64
@@ -35,7 +35,7 @@ WEIGHT_DECAY = 1e-4
 N_EPOCHS     = 200
 PATIENCE     = 30
 MIN_LR       = 1e-5
-PW_CLIP      = 20.0    # cap on pos_weight
+PW_CLIP      = 10.0    # cap on pos_weight
 
 # Cross-validation 
 N_FOLDS = 5

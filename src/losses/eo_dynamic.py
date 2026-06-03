@@ -29,7 +29,7 @@ def equalized_odds_loss_dynamic(
     min_group_frac=0.03,
     trend_weight=0.4,
     current_epoch=0,
-    time_schedule_mode="flat",   # "u_shaped" per PP, "decay" per dynamic
+    time_schedule_mode="flat", 
 ):
 
   if mode== "trend_aware":
@@ -80,20 +80,14 @@ def equalized_odds_loss_dynamic(
             fnr_gap = torch.abs(fnr_s1 - fnr_s0)
             eo_t    = fpr_gap + fnr_gap
 
-
-            if current_epoch % 20 == 0:
-              print(f"    t={t.item():.0f} fpr_s1={fpr_s1:.4f} fpr_s0={fpr_s0:.4f} "
-                    f"fnr_s1={fnr_s1:.4f} fnr_s0={fnr_s0:.4f} eo_t={eo_t:.4f} "
-                    f"n_s0={n_s0} n_s1={n_s1}")
-
-
             if torch.isfinite(eo_t):
-                # alpha schedule: peso temporale × curriculum epoca
+                
                 a_t = alpha_schedule(
                     epoch=current_epoch,
                     time_val=t.item(),
                     mode=time_schedule_mode,
                 )
+                
                 eo_per_t.append(a_t * eo_t)
                 fpr_gap_t.append(fpr_gap)
                 fnr_gap_t.append(fnr_gap)
@@ -117,7 +111,9 @@ def equalized_odds_loss_dynamic(
 
         loss_gap = (eo_stack * gap_w).sum()
 
-        return (1 - trend_weight) * loss_gap + trend_weight * trend_loss
+        
+        result=(1 - trend_weight) * loss_gap + trend_weight * trend_loss
+        return result
   else: 
           eps = 1e-10
           unique_times = torch.unique(time_vals)
@@ -134,7 +130,7 @@ def equalized_odds_loss_dynamic(
               s   = sensitive[mask]
               lt  = label_true[mask]
 
-              # skippa se un gruppo è assente o mancano entrambe le label
+         
               valid = ~torch.isnan(s)
               if valid.sum() == 0:
                   continue
@@ -147,11 +143,9 @@ def equalized_odds_loss_dynamic(
               n_s1 = (s == 1).sum().item()
 
 
-              # FIX: soglia relativa invece di assoluta
-              min_frac = 0.05  # almeno 5% del risk set totale a quel t
+              min_frac = 0.05 
               if min(n_s0, n_s1) < max(10, int(min_frac * (n_s0 + n_s1))):
-
-                  continue
+                 continue
 
 
               if torch.unique(s).shape[0] < 2:

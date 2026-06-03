@@ -36,7 +36,7 @@ def train_mlp(
     n_epochs=200,
     patience=30,
     min_lr=1e-5,
-    pw_clip=20.0,
+    pw_clip=10.0,
     beta=0.0,    # M_STATIC
     alpha=0.0,   # M_DYNAMIC
     eo_mode_d="mean",
@@ -69,17 +69,6 @@ def train_mlp(
     n_neg = max((ytr == 0).sum(), 1)
     pw    = float(np.clip(n_neg / n_pos, 1.0, pw_clip))   
     pos_w = torch.tensor([pw], dtype=torch.float32, device=DEVICE)
-
-    if verbose:
-      print(f"\n  [TRAIN DIAGNOSTIC]")
-      print(f"  Xtr_s mean={Xtr_s.mean():.4f}  std={Xtr_s.std():.4f}")
-      print(f"  ytr prev={ytr.mean():.4f}")
-      print(f"  pos_weight={pw:.4f}")
-      print(f"  init_bias={float(np.log(ytr.mean() / (1 - ytr.mean() + 1e-9))):.4f}")
-      if sensitive_tr is not None:
-          s = sensitive_tr
-          print(f"  sens 0={( s==0).sum()}  1={(s==1).sum()}  NaN={np.isnan(s.astype(float)).sum()}")
-  
 
     # Model Initialization
     model     = MLP(X_train.shape[1], hidden1, hidden2, dropout).to(DEVICE)

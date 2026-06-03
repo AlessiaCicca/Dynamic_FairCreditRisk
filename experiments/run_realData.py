@@ -330,6 +330,13 @@ def main():
         first_event_col="FirstDefaultAge",
         sens_col="sens_loan", enc_cat=enc_cat,
     )
+    print(f"[STATIC DIAGNOSTIC]")
+    print(f"  grp_static unique: {len(np.unique(static_data['groups']))}")
+    print(f"  y_static pos: {static_data['y'].sum()}")
+    print(f"  y_static prev: {static_data['y'].mean():.4f}")
+    print(f"  X_static shape: {static_data['X'].shape}")
+    print(f"  X_static mean: {static_data['X'].mean():.4f}")
+
 
     print("\nBuilding DYNAMIC dataset...")
     dynamic_data = build_dynamic(
