@@ -12,8 +12,8 @@ from sklearn.metrics import roc_auc_score
 
 from src.models.mlp import MLP
 from src.losses.eo_static import equalized_odds_loss
-from src.losses.eo_dynamic import equalized_odds_loss_dynamic
-
+#from src.losses.eo_dynamic import equalized_odds_loss_dynamic
+from src.losses.eo_dynamics_debug import equalized_odds_loss_dynamic
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

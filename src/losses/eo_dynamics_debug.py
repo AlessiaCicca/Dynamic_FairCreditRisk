@@ -9,20 +9,19 @@ def alpha_schedule(epoch, time_val, max_epoch=200, warmup=50,
 
     t_norm = (time_val - t_min) / (t_max - t_min + 1e-9)
     if mode == "decay":
-        g = 1.0 - 0.5 * t_norm
+        g = 10.0 - 9.0 * t_norm
     elif mode == "growth":
-        g = 0.5 + 0.5 * t_norm
+        g = 1.0 + 9.0 * t_norm  # va da 1 a 10
     elif mode == "flat":
         g = 1.0
     elif mode == "u_shaped":
         g = 0.5 + 0.5 * abs(2*t_norm - 1)
+    elif mode=="n_shaped":
+        g = 1.0 + 9.0 * (1 - abs(2*t_norm - 1))
     else:
         raise ValueError(mode)
 
     result = f * g
-    # --- PRINT SCHEDULE ---
-    print(f"  [alpha_schedule] epoch={epoch:3d} | t={time_val:5.1f} | "
-          f"f={f:.4f} | g={g:.4f} | alpha={result:.4f}  (mode={mode})")
     return result
 
 
@@ -93,11 +92,7 @@ def equalized_odds_loss_dynamic(
                     mode=time_schedule_mode,
                 )
                               # --- PRINT EFFETTO SCHEDULE ---
-                print(f"    [loss] t={t.item():.1f} | eo_raw={eo_t.item():.6f} | "
-                      f"a_t={a_t:.4f} | eo_weighted={a_t * eo_t.item():.6f} | "
-                      f"ratio={a_t:.2%}")
-                
-                
+                 
                 eo_per_t.append(a_t * eo_t)
                 fpr_gap_t.append(fpr_gap)
                 fnr_gap_t.append(fnr_gap)
@@ -117,19 +112,13 @@ def equalized_odds_loss_dynamic(
             trend_loss = torch.tensor(0.0, device=device)
 
         unweighted_mean = eo_stack.detach().mean().item()  # prima della gap_w
-        print(f"  [loss_final] epoch={current_epoch} | "
-              f"n_times={len(eo_stack)} | "
-              f"loss_gap={loss_gap.item():.6f} | "
-              f"trend_loss={trend_loss.item():.6f} | "
-              f"total={(1-trend_weight)*loss_gap.item() + trend_weight*trend_loss.item():.6f}")
-        
 
         gap_w    = eo_stack.detach() + eps
         gap_w    = gap_w / gap_w.sum()
 
         loss_gap = (eo_stack * gap_w).sum()
 
-        
+       
         result=(1 - trend_weight) * loss_gap + trend_weight * trend_loss
     
         return result

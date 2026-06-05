@@ -3,3 +3,4 @@ Migliorare feature engineering e model
 Controlla questione validation set
 valuta se mantenere o togliere le trend columns
 Controlla sampling che usa derived_sex invece di applicant_sex
+DECAY FUNZIONA SU SEX 
