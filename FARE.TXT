@@ -4,3 +4,21 @@ Controlla questione validation set
 valuta se mantenere o togliere le trend columns
 Controlla sampling che usa derived_sex invece di applicant_sex
 DECAY FUNZIONA SU SEX 
+
+
+DA CONTROLLARE — censoring dentro la finestra di orizzonte
+Cos'è. In build_dynamic.py la label future_event vale 1 se il default cade in (L, L+horizon], 0 in tutti gli altri casi. Il problema è che negli y = 0 finiscono mescolati due gruppi diversi:
+
+(a) prestiti osservati per tutta la finestra senza default → veri non-eventi ✓
+(b) prestiti che escono dall'osservazione prima di L+horizon senza aver defaultato (prepayment o fine dei dati) → sono censurati, ma vengono etichettati 0 lo stesso ✗
+
+Il codice non li distingue.
+Perché è un problema. Per un prestito censurato a L+2 con horizon = 12, ho osservato solo 2 mesi su 12. Non so cosa sarebbe successo negli altri 10. Etichettarlo 0 significa assumere "non avrebbe defaultato" — un'assunzione che non posso fare. È esattamente il censoring che la survival analysis serve a gestire. Se questa quota è grossa, definire il modello "survival model" non regge davanti alla commissione.
+Controllo concreto. Per ogni landmark L, tra le righe con y = 0, conta quante hanno: FirstDefaultAge = NaN e ultima età osservata del prestito (max loan_age) < L + horizon. Quella è la quota di censurati-nella-finestra trattati come non-eventi.
+
+se è piccola (diciamo < 5%) → la dichiari in tesi e vai avanti;
+se è significativa → va corretta.
+
+Come si risolve (due opzioni).
+
+Filtro (semplice): nella label tieni solo i prestiti con follow-up completo, cioè last_age ≥ L + horizon oppure default entro la finestra. Pulisce l'etichetta, costa un po' di dati.
