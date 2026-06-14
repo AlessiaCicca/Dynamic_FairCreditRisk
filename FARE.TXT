@@ -26,4 +26,4 @@ Filtro (semplice): nella label tieni solo i prestiti con follow-up completo, cio
 
 Da qui un parametro di design tuo: la griglia dei landmark controlla quanto è dinamico il modello. Landmark fitti (es. ogni mese, {0,1,2,… }\{0,1,2,\dots\}
 {0,1,2,…}) → tanti snapshot, modello molto reattivo ma più pesante. Landmark radi (come {0,3,6}\{0,3,6\}
-{0,3,6}) → meno aggiornamenti, più leggero. Se volessi usare lo stato del mese 11 come input, la mossa sarebbe semplicemente aggiungere 11 alla griglia dei landmark.
+{0,3,6}) → meno aggiornamenti, più leggero. Se volessi usare lo stato del mese 11 come input, la mossa sarebbe semplicemente aggiungere 11 alla griglia dei landmark. SI PUO' GIUSTIFICARE CON UN TREND A 3 ANNI
