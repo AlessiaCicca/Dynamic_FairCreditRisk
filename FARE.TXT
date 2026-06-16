@@ -33,4 +33,4 @@ Da qui un parametro di design tuo: la griglia dei landmark controlla quanto è d
 AGGIUNGI PLOT PROBABILITY DI DEFAULT O SURVIVAL
 
 
-VEDERE NEL DETTAGLIO LA PARTE DINAMICA
+VEDERE NEL DETTAGLIO LA PARTE DINAMICA: https://github.com/thehanlab/dynamicLM
