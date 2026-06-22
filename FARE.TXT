@@ -49,3 +49,4 @@ S(6|1) = 0.99·0.985·0.98·0.98·0.97 = 0.908
 Quasi sempre quella che intendi con "probabilità di default a 6" è la 1 (entro 6), ed è quella che ricostruisci incatenando gli hazard. Quindi sì: produci h₂…h₆ dalla foto a 1, li incateni, e ottieni la probabilità di default entro il mese 6.
 Poi — qui scatta la dinamicità — quando arrivi al landmark 2 rifai la foto, Z(2) fresca, e rigeneri la finestra (3, 4, 5, 6, 7…) con le informazioni aggiornate. La traiettoria di rischio del prestito si muove perché cambia la foto a ogni landmark, non perché guardi avanti dentro la finestra. Dentro la finestra resti sempre fermo alla foto del landmark.
 
+VERIFICA PERCH' NON C'è LOAN AMOUNT O CURRENTUBP
