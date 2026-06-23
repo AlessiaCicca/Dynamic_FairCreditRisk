@@ -1,7 +1,8 @@
 """
-Builds the landmark (dynamic) dataset from the raw longitudinal panel.
-One row per subject × landmark, features from the snapshot at that landmark.
-Target: default in (landmark, landmark + horizon].
+Builds the landmark discrete-time survival dataset from the longitudinal panel.
+n_bins rows per (subject, landmark): covariates frozen at x(L), one row per
+future bin (L+delta*j, L+delta*(j+1)]. Target event_bin = default within that bin.
+Rows censored before the bin end are dropped (exposure-correct).
 
 """
 
@@ -18,6 +19,7 @@ def build_dynamic(
     cat_cols,
     landmarks,
     horizon,
+    delta=3,
     id_col="ID",
     time_col="Time",
     first_event_col="FirstEventTime",
@@ -25,41 +27,58 @@ def build_dynamic(
     enc_cat=None,
 ):
 
-    lm_rows = []
     
     # For each landmark L:
     # - keeps only rows at time L (snapshot)
     # - keeps only subjects still at risk — those who have not yet experienced the event
     # - computes future_event = 1 if default occurs between L and L+horizon
+
+    n_bins = horizon // delta
+    last_obs = df.groupby(id_col)[time_col].max()  
+    lm_rows = []
     
     for L in landmarks:
-        snap = df[df[time_col] == L].copy()
-        snap = snap[snap[first_event_col].isna() | (snap[first_event_col] > L)].copy()
-        snap["future_event"] = (
-            snap[first_event_col].notna() &
-            (snap[first_event_col] > L) &
-            (snap[first_event_col] <= L + horizon)
-        ).astype(np.int8)
-        # Create landamrk columns
-        snap["landmark"] = np.int8(L)
-        lm_rows.append(snap)
+        snap0 = df[df[time_col] == L].copy()                       # x(L): foto a L
+        snap0 = snap0[snap0[first_event_col].isna() | (snap0[first_event_col] > L)].copy()
+        snap0["_last_obs"] = snap0[id_col].map(last_obs)
+
+        for j in range(n_bins):
+            b0 = L + delta * j          # inizio bin
+            b1 = L + delta * (j + 1)    # fine bin
+            fe = snap0[first_event_col]
+
+            ev       = fe.notna() & (fe > b0) & (fe <= b1)         # default in questo bin
+            at_risk  = fe.isna()  | (fe > b0)                      # vivo all'inizio del bin
+            observed = ev | (snap0["_last_obs"] >= b1)             # osservato fino a fine bin (censura)
+
+            row = snap0[at_risk & observed].copy()                 # x(L) RIPETUTE, non ri-snapshot
+            row["event_bin"] = (
+                row[first_event_col].notna()
+                & (row[first_event_col] > b0)
+                & (row[first_event_col] <= b1)
+            ).astype(np.int8)
+            row["landmark"] = np.int8(L)
+            row["bin_time"] = np.int16(b0)                         # età-prestito al bin (clock di hazard)
+            lm_rows.append(row)
 
     landmark_df = pd.concat(lm_rows, ignore_index=True)
     del lm_rows
 
 
-    # Categorical encoding of landmark -> convert the landamrk column in one-hot
+    # Categorical encoding
     if enc_cat is None:
         enc_cat = OneHotEncoder(handle_unknown="ignore", sparse_output=False, dtype=np.float32)
         enc_cat.fit(landmark_df[cat_cols])
-    enc_lmk = OneHotEncoder(handle_unknown="ignore", sparse_output=False, dtype=np.float32)
-    enc_lmk.fit(np.array(landmarks).reshape(-1, 1))
     cats              = enc_cat.transform(landmark_df[cat_cols])
-    lmk_oh            = enc_lmk.transform(landmark_df[["landmark"]])
     cat_feature_names = list(enc_cat.get_feature_names_out(cat_cols))
-    lmk_feature_names = [f"lmk_{L}" for L in landmarks]
-    # → ["lmk_3", "lmk_6", "lmk_9", "lmk_12"]
 
+    # Temporal baseline hazard: one-hot of bin_time (loan age at the bin), NOT landmark
+    all_bin_times = sorted({L + delta * j for L in landmarks for j in range(n_bins)})
+    enc_lmk = OneHotEncoder(handle_unknown="ignore", sparse_output=False, dtype=np.float32)
+    enc_lmk.fit(np.array(all_bin_times).reshape(-1, 1))
+    lmk_oh            = enc_lmk.transform(landmark_df[["bin_time"]])
+    lmk_feature_names = [f"bt_{t}" for t in all_bin_times]
+    
     all_num_cols = static_cols + tvc_cols
 
     # Replaces missing values with the column median 
@@ -73,7 +92,9 @@ def build_dynamic(
     X = np.hstack([num, cats, lmk_oh])
 
     # Extracts vectors needed for training
-    y         = landmark_df["future_event"].to_numpy(dtype=np.int8)
+
+    y  = landmark_df["event_bin"].to_numpy(dtype=np.int8)  
+    bin_time_vals = landmark_df["bin_time"].to_numpy()       
     groups    = landmark_df[id_col].to_numpy()
     sensitive = landmark_df[sens_col].to_numpy(dtype=np.float64)
     lmk_vals  = landmark_df["landmark"].to_numpy()
@@ -91,6 +112,7 @@ def build_dynamic(
         groups        = groups,
         sensitive     = sensitive,
         lmk_vals      = lmk_vals,
+        bin_time_vals = bin_time_vals, 
         enc_cat       = enc_cat,
         enc_lmk       = enc_lmk,
         medians       = medians,
