@@ -20,7 +20,7 @@ from sklearn.preprocessing import OneHotEncoder
 import sys
 from pathlib import Path
 
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_auc_score, brier_score_loss
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -425,11 +425,17 @@ def main():
     print(f"\nM_DYNAMIC (PD-12) AUC={dyn_auc:.4f}  Brier={dyn_brier:.4f}")
 
 
- 
+    '''
     summary = build_summary_table({
         "M_STATIC":  res_static,
         "M_DYNAMIC": res_dynamic,
     })
+    '''
+    summary = pd.DataFrame([
+    {"Model": "M_STATIC",  **res_static["summary"]},
+    {"Model": "M_DYNAMIC", "AUC_Mean": dyn_auc, "Brier_Mean": dyn_brier},
+    ])
+    
     print("\n=== CV RESULTS ===")
     print(summary.to_string(index=False))
     summary.to_csv(out_dir / "cv_results.csv", index=False)
@@ -461,9 +467,14 @@ def main():
     print("="*60)
 
     th_static  = res_static["threshold"]
-    th_dynamic = res_dynamic["threshold"]
 
 
+    bin_ids = dynamic_data["groups"]
+    dyn_sens_collapsed = {}
+    for attr, sarr in dyn_sens_by_attr.items():
+        id2g = pd.Series(sarr, index=bin_ids)
+        id2g = id2g[~id2g.index.duplicated(keep="first")]   # gruppo costante per id
+        dyn_sens_collapsed[attr] = pd.Series(dyn_ids).map(id2g).to_numpy()
 
     df_agg, df_dyn_lmk, df_auc = run_fairness_analysis(
     y_static=static_data["y"],
