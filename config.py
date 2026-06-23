@@ -14,7 +14,7 @@ SEED = 42
 
 # Fairness penalty coefficients 
 BETA  = 0.3   # M_STATIC  EO penalty weight
-ALPHA = 1.05  # M_DYNAMIC EO penalty weight
+ALPHA = 0.8 # M_DYNAMIC EO penalty weight
 
 # EO penalty mode
 # Options: "mean" | "weighted" | "trend_aware"
@@ -22,7 +22,7 @@ EO_MODE_D = "trend_aware"   # dynamic model
 
 # Time schedule mode (alpha_schedule)
 # Options: "flat" | "decay" | "growth" | "u_shaped" 
-SCHEDULE_MODE_D = "decay"
+SCHEDULE_MODE_D = "flat"
 
 # MLP architecture 
 HIDDEN1  = 64
@@ -62,7 +62,9 @@ GROUP_NAMES_SIM = {0: "S0", 1: "S1"}
 
 # Real dataset
 HORIZON_MONTHS = 12
-LANDMARKS = [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42, 45, 48]
+#LANDMARKS = [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42, 45, 48]
+#LANDMARKS = [0, 6,  12,  18,  24,  30,  36,  42, 48]
+LANDMARKS = [0, 4, 8, 12, 16,  20,  24, 28,  32,  36, 40,  44, 48]
 
 STATIC_COLS = [
     "credit_score", "original_dti", "original_ltv", 
@@ -113,6 +115,6 @@ GRID_BETAS  = [0.0, 0.3, 0.5, 0.7, 1.0]
 GRID_ALPHAS = [0.0, 0.3, 0.5, 0.7, 0.9, 1.0, 1.2]
 
 # W&B
-USE_WANDB    = True
+USE_WANDB    = False
 WANDB_ENTITY = "alessia-ciccaglione02-"
 WANDB_PROJECT = "ThesisFairness"

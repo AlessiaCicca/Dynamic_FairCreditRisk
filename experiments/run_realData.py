@@ -355,7 +355,7 @@ def main():
         df=df,
         static_cols=STATIC_COLS, tvc_cols=TVC_COLS,
         cat_cols=CAT_COLS, landmarks=cfg["landmarks"],
-        horizon=cfg["horizon"],delta=cfg.get("delta", 3),  
+        horizon=cfg["horizon"],delta=cfg.get("delta", 4),  
         id_col="loan_sequence_number", time_col="loan_age",
         first_event_col="FirstDefaultAge",
         sens_col="sens_loan", enc_cat=enc_cat,
@@ -401,7 +401,7 @@ def main():
         landmarks=cfg["landmarks"], **train_kwargs,
     )
     
-    n_bins = cfg["horizon"] // cfg.get("delta", 3)
+    n_bins = cfg["horizon"] // cfg.get("delta", 4)
 
     pd12_df = collapse_to_pd12(
         oof_hazard = res_dynamic["oof_preds"],

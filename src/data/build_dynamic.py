@@ -19,7 +19,7 @@ def build_dynamic(
     cat_cols,
     landmarks,
     horizon,
-    delta=3,
+    delta=6,
     id_col="ID",
     time_col="Time",
     first_event_col="FirstEventTime",
