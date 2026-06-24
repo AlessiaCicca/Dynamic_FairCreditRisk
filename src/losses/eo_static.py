@@ -17,5 +17,6 @@ def equalized_odds_loss(label_pred, sensitive, label_true):
     fpr_s      = torch.sum(label_pred * s     * neg) / n_s_neg
     fnr_sbar   = torch.sum((1 - label_pred) * s_bar * pos) / n_sbar_pos
     fnr_s      = torch.sum((1 - label_pred) * s     * pos) / n_s_pos
-    eq_odds    = torch.abs(fpr_sbar - fpr_s) + torch.abs(fnr_sbar - fnr_s)
+    #eq_odds    = torch.abs(fpr_sbar - fpr_s) + torch.abs(fnr_sbar - fnr_s)
+    eq_odds    = torch.abs((fpr_sbar - fpr_s) +(fnr_sbar - fnr_s))
     return eq_odds if torch.isfinite(eq_odds) else torch.tensor(0.0, device=label_pred.device)

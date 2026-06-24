@@ -3,6 +3,10 @@ Grid search on the AUC vs Separation trade-off for the two MLP models.
 Separation is measured as AUC of the fairness curve over time,
 consistent with the main run.
 
+NOTE: oltre a `separation_auc` (valutata alla soglia F1-ottima di OGNI cella),
+viene calcolata `separation_auc_fixed`, valutata alla soglia del BASELINE
+(coef=0) del rispettivo modello. Questo isola l'effetto del penalty dal
+movimento della soglia F1, senza modificare la metrica di fairness.
 """
 
 import numpy as np
@@ -42,9 +46,10 @@ def _run_cv(
     group_names,
     n_folds=5,
     eo_mode_d="mean",
-    schedule_mode_d="flat"):
+    schedule_mode_d="flat",
+    fixed_th=None):          # NEW: soglia del baseline; se data, calcola anche sep a soglia fissa
 
-    # Seed setup    
+    # Seed setup
     np.random.seed(42)
     torch.manual_seed(42)
     if torch.cuda.is_available():
@@ -75,10 +80,8 @@ def _run_cv(
         # Find the threshold that maximize F1
         best_th = find_best_threshold(y[tr_idx], p_tr)
         thresholds.append(best_th)
-        
 
-
-    th = float(np.mean(thresholds)) 
+    th = float(np.mean(thresholds))
 
     # Mean OOF AUC
     fold_aucs = []
@@ -88,57 +91,70 @@ def _run_cv(
                 roc_auc_score(y[te_idx].astype(int), oof_preds[te_idx])
             )
 
-    # Fairness AUC 
-    if time_arr is not None:
-        time_rows = []
-        for t in sorted(np.unique(time_arr)):
-            mask = time_arr == t
-            if mask.sum() < 20:
-                continue
+    # ---- separation valutata a una soglia data (helper) ----
+    def compute_separation(eval_th):
+        if time_arr is not None:
+            time_rows = []
+            for t in sorted(np.unique(time_arr)):
+                mask = time_arr == t
+                if mask.sum() < 20:
+                    continue
+                yt_f, yp_f, sn_f = filter_sensitive(
+                    y[mask].astype(int), oof_preds[mask], sens[mask]
+                )
+                if len(np.unique(yt_f)) < 2 or len(np.unique(sn_f)) < 2:
+                    continue
+                yb_f = (yp_f >= eval_th).astype(int)
+                res  = fairness_metrics(yt_f, yp_f, yb_f, sn_f,
+                                        group_names, threshold=eval_th)
+                axioms = res.get("axioms", {})
+                time_rows.append({
+                    "t":          t,
+                    "separation": axioms.get("separation", np.nan),
+                })
+
+            df_t = pd.DataFrame(time_rows)
+
+            def trapz_norm(col):
+                sub = df_t.dropna(subset=[col])
+                if len(sub) < 3:
+                    return np.nan
+                t_v = sub["t"].values.astype(float)
+                v   = sub[col].values.astype(float)
+                t_n = (t_v - t_v.min()) / (t_v.max() - t_v.min() + 1e-9)
+                return float(np.trapezoid(v, t_n))
+
+            sep_auc  = trapz_norm("separation")
+            sep_mean = df_t["separation"].mean() if not df_t.empty else np.nan
+            return sep_auc, sep_mean
+        else:
             yt_f, yp_f, sn_f = filter_sensitive(
-                y[mask].astype(int), oof_preds[mask], sens[mask]
+                y.astype(int), oof_preds, sens
             )
-            if len(np.unique(yt_f)) < 2 or len(np.unique(sn_f)) < 2:
-                continue
-            yb_f = (yp_f >= th).astype(int)
-            res  = fairness_metrics(yt_f, yp_f, yb_f, sn_f,
-                                    group_names, threshold=th)
+            yb_f   = (yp_f >= eval_th).astype(int)
+            res    = fairness_metrics(yt_f, yp_f, yb_f, sn_f,
+                                      group_names, threshold=eval_th)
             axioms = res.get("axioms", {})
-            time_rows.append({
-                "t":            t,
-                "separation":   axioms.get("separation",   np.nan),
-            })
+            s = axioms.get("separation", np.nan)
+            return s, s
 
-        df_t = pd.DataFrame(time_rows)
+    # separation alla soglia F1 di QUESTA cella (comportamento storico, invariato)
+    sep_auc, sep_mean = compute_separation(th)
 
-        def trapz_norm(col):
-            sub = df_t.dropna(subset=[col])
-            if len(sub) < 3:
-                return np.nan
-            t_v = sub["t"].values.astype(float)
-            v   = sub[col].values.astype(float)
-            t_n = (t_v - t_v.min()) / (t_v.max() - t_v.min() + 1e-9)
-            return float(np.trapezoid(v, t_n))
-
-        sep_auc  = trapz_norm("separation")
-        sep_mean = df_t["separation"].mean() if not df_t.empty else np.nan
-
+    # separation alla soglia del BASELINE (se fornita)
+    if fixed_th is not None:
+        sep_auc_fixed, sep_mean_fixed = compute_separation(float(fixed_th))
     else:
-        yt_f, yp_f, sn_f = filter_sensitive(
-            y.astype(int), oof_preds, sens
-        )
-        yb_f   = (yp_f >= th).astype(int)
-        res    = fairness_metrics(yt_f, yp_f, yb_f, sn_f,
-                                  group_names, threshold=th)
-        axioms = res.get("axioms", {})
-        sep_auc  = axioms.get("separation",   np.nan)
-        sep_mean = sep_auc
+        sep_auc_fixed, sep_mean_fixed = np.nan, np.nan
 
     return {
-        "auc_mean":         float(np.nanmean(fold_aucs)) if fold_aucs else np.nan,
-        "separation_auc":   sep_auc,
-        "separation_mean":  sep_mean,
-        "threshold":        float(th),
+        "auc_mean":              float(np.nanmean(fold_aucs)) if fold_aucs else np.nan,
+        "separation_auc":        sep_auc,
+        "separation_mean":       sep_mean,
+        "separation_auc_fixed":  sep_auc_fixed,
+        "separation_mean_fixed": sep_mean_fixed,
+        "threshold":             float(th),
+        "fixed_threshold":       float(fixed_th) if fixed_th is not None else np.nan,
     }
 
 
@@ -164,47 +180,61 @@ def run_grid_search(
     print("=" * 60)
     print("GRID SEARCH — M_STATIC")
     print("=" * 60)
-    # Passing different values of β while α=0
+    static_base_th = None      # soglia del baseline statico (beta=0)
     for beta in betas:
         print(f"  beta={beta:.2f} ...", end=" ", flush=True)
         r = _run_cv(
             "static", X_static, y_static, grp_static, sens_static, None,
             beta=beta, alpha=0.0,
             group_names=group_names, n_folds=n_folds,
-            eo_mode_d=eo_mode_d
+            eo_mode_d=eo_mode_d,
+            fixed_th=static_base_th,
         )
+        if beta == 0.0:
+            # baseline: cattura la soglia e, per definizione, sep_fixed == sep
+            static_base_th = r["threshold"]
+            r["separation_auc_fixed"]  = r["separation_auc"]
+            r["separation_mean_fixed"] = r["separation_mean"]
+            r["fixed_threshold"]       = static_base_th
         records.append({"model": "M_STATIC", "coef": beta,
                          "coef_name": "beta", **r})
-        print(f"AUC={r['auc_mean']:.4f}  sep_auc={r['separation_auc']:.4f}")
+        print(f"AUC={r['auc_mean']:.4f}  sep={r['separation_auc']:.4f}  "
+              f"sep_fix={r['separation_auc_fixed']:.4f}")
 
-    # M_DYNAMIC 
+    # M_DYNAMIC
     print("\n" + "=" * 60)
     print("GRID SEARCH — M_DYNAMIC")
     print("=" * 60)
-    # Passing different values of α while β=0
+    dyn_base_th = None         # soglia del baseline dinamico (alpha=0)
     for alpha in alphas:
         print(f"  alpha={alpha:.2f} ...", end=" ", flush=True)
         r = _run_cv(
             "dynamic", X_dynamic, y_dynamic, grp_dynamic, sens_dynamic,
-            lmk_vals, beta=0.0, alpha=alpha, 
+            lmk_vals, beta=0.0, alpha=alpha,
             group_names=group_names, n_folds=n_folds,
-            eo_mode_d=eo_mode_d, 
+            eo_mode_d=eo_mode_d,
             schedule_mode_d=schedule_mode_d,
+            fixed_th=dyn_base_th,
         )
+        if alpha == 0.0:
+            dyn_base_th = r["threshold"]
+            r["separation_auc_fixed"]  = r["separation_auc"]
+            r["separation_mean_fixed"] = r["separation_mean"]
+            r["fixed_threshold"]       = dyn_base_th
         records.append({"model": "M_DYNAMIC", "coef": alpha,
                          "coef_name": "alpha", **r})
-        print(f"AUC={r['auc_mean']:.4f}  sep_auc={r['separation_auc']:.4f}")
-
+        print(f"AUC={r['auc_mean']:.4f}  sep={r['separation_auc']:.4f}  "
+              f"sep_fix={r['separation_auc_fixed']:.4f}")
 
     df_grid = pd.DataFrame(records)
     csv_path = out_dir / f"grid_tradeoff_{run_tag}.csv"
     df_grid.to_csv(csv_path, index=False)
     print(df_grid.to_string(index=False))
 
-
     print_best_points(df_grid, out_dir)
 
     return df_grid
+
 
 # Compute best trade-off point for each model
 def _compute_best(df_grid):
@@ -212,12 +242,11 @@ def _compute_best(df_grid):
     M_STATIC:  minimizes separation using normalized AUC vs sep trade-off score
     M_DYNAMIC: minimizes separation subject to AUC >= static baseline AUC (beta=0)
     """
-  
+
     static_baseline = df_grid[
         (df_grid["model"] == "M_STATIC") & (df_grid["coef"] == 0.0)
     ]["auc_mean"].values
     static_auc = float(static_baseline[0]) if len(static_baseline) > 0 else 0.0
-
 
     sub_s_all = df_grid[df_grid["model"] == "M_STATIC"]\
                     .dropna(subset=["auc_mean", "separation_auc"])\
@@ -234,12 +263,10 @@ def _compute_best(df_grid):
 
     best_per_model = {}
 
- 
     if not sub_s_all.empty:
         scores = np.array([trade_score(a, s) for a, s in
                            zip(sub_s_all["auc_mean"], sub_s_all["separation_auc"])])
         best_per_model["M_STATIC"] = sub_s_all.iloc[np.argmax(scores)]
-
 
     sub_d = df_grid[df_grid["model"] == "M_DYNAMIC"]\
                 .dropna(subset=["auc_mean", "separation_auc"])\
@@ -252,6 +279,7 @@ def _compute_best(df_grid):
     ]
 
     return best_per_model, trade_score
+
 
 def print_best_points(df_grid, out_dir):
     best_per_model, _ = _compute_best(df_grid)

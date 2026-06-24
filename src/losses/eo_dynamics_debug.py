@@ -152,7 +152,7 @@ def equalized_odds_loss_dynamic(
 
 
               min_frac = 0.01 
-              if min(n_s0, n_s1) < max(10, int(min_frac * (n_s0 + n_s1))):
+              if min(n_s0, n_s1) < max(3, int(min_frac * (n_s0 + n_s1))):
                  continue
 
 
@@ -174,7 +174,8 @@ def equalized_odds_loss_dynamic(
               fnr_sbar = torch.sum((1 - lp) * s_bar * pos) / n_sbar_pos
               fnr_s    = torch.sum((1 - lp) * s_    * pos) / n_s_pos
 
-              eo_t = torch.abs(fpr_sbar - fpr_s) + torch.abs(fnr_sbar - fnr_s)
+              #eo_t = torch.abs(fpr_sbar - fpr_s) + torch.abs(fnr_sbar - fnr_s)
+              eo_t = torch.abs((fpr_sbar - fpr_s) + (fnr_sbar - fnr_s))
 
               if torch.isfinite(eo_t):
                 

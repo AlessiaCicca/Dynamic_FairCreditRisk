@@ -14,11 +14,11 @@ SEED = 42
 
 # Fairness penalty coefficients 
 BETA  = 0.3   # M_STATIC  EO penalty weight
-ALPHA = 0.8 # M_DYNAMIC EO penalty weight
+ALPHA = 0.7 # M_DYNAMIC EO penalty weight
 
 # EO penalty mode
 # Options: "mean" | "weighted" | "trend_aware"
-EO_MODE_D = "trend_aware"   # dynamic model
+EO_MODE_D = "mean"   # dynamic model
 
 # Time schedule mode (alpha_schedule)
 # Options: "flat" | "decay" | "growth" | "u_shaped" 
@@ -112,7 +112,7 @@ RACE_MINORITY = {
 
 # Grid search
 GRID_BETAS  = [0.0, 0.3, 0.5, 0.7, 1.0]
-GRID_ALPHAS = [0.0, 0.3, 0.5, 0.7, 0.9, 1.0, 1.2]
+GRID_ALPHAS = [0.0, 0.3, 0.5, 0.7, 0.9, 1.0]
 
 # W&B
 USE_WANDB    = False

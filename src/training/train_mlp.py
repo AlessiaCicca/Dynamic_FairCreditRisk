@@ -4,6 +4,7 @@ Imports MLP from src.models.mlp and loss functions from src.losses.
 """
 
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -13,7 +14,7 @@ from sklearn.metrics import roc_auc_score
 from src.models.mlp import MLP
 from src.losses.eo_static import equalized_odds_loss
 #from src.losses.eo_dynamic import equalized_odds_loss_dynamic
-from src.losses.eo_dynamics_debug import equalized_odds_loss_dynamic
+from src.losses.eo_dynamics_pd import equalized_odds_loss_dynamic
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -83,6 +84,16 @@ def train_mlp(
 
     # Training loop
     model.train()  
+    # Mappa (soggetto, landmark) -> id gruppo, per il collapse PD-12 nella loss
+    group_idx = None
+    if apply_fair_dynamic and (subj_ids_tr is not None) and (time_tr is not None):
+        gkey = (
+            pd.DataFrame({"s": np.asarray(subj_ids_tr), "t": np.asarray(time_tr)})
+            .groupby(["s", "t"], sort=False)
+            .ngroup()
+            .to_numpy()
+        )
+        group_idx = torch.tensor(gkey, dtype=torch.long, device=DEVICE)
     for epoch in range(n_epochs):
         # Resets the accumulated gradients from the previous step
         optimizer.zero_grad()
@@ -103,7 +114,7 @@ def train_mlp(
             L_eo = equalized_odds_loss_dynamic(
                 logits, sens_train, y_train, time_train,
                 mode=eo_mode_d, current_epoch=epoch,
-                time_schedule_mode=schedule_mode_d)
+                time_schedule_mode=schedule_mode_d,group_idx=group_idx)
             loss = (1 - alpha) * L_bce + alpha * L_eo
 
         else:
