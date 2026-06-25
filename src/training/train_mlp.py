@@ -13,8 +13,7 @@ from sklearn.metrics import roc_auc_score
 
 from src.models.mlp import MLP
 from src.losses.eo_static import equalized_odds_loss
-#from src.losses.eo_dynamic import equalized_odds_loss_dynamic
-from src.losses.eo_dynamics_pd import equalized_odds_loss_dynamic
+from src.losses.eo_dynamic import equalized_odds_loss_dynamic
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -42,6 +41,7 @@ def train_mlp(
     alpha=0.0,   # M_DYNAMIC
     eo_mode_d="mean",
     schedule_mode_d="flat",
+    t_min=0.0, t_max=48.0,   
     verbose=False,
 ):
 
@@ -114,7 +114,8 @@ def train_mlp(
             L_eo = equalized_odds_loss_dynamic(
                 logits, sens_train, y_train, time_train,
                 mode=eo_mode_d, current_epoch=epoch,
-                time_schedule_mode=schedule_mode_d,group_idx=group_idx)
+                time_schedule_mode=schedule_mode_d,group_idx=group_idx,
+                t_min=t_min, t_max=t_max) 
             loss = (1 - alpha) * L_bce + alpha * L_eo
 
         else:
