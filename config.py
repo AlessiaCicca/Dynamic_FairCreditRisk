@@ -45,6 +45,7 @@ SCENARIO         = "fair"          # "fair" | "direct" | "proxy" | "temporal"
 HORIZON          = 3               # prediction horizon (periods)
 LANDMARKS_SIM        = list(range(1, 13))
 N_TEST_LANDMARKS = 12
+DELTA_SIM=1
 
 # Column names in simulation dataset
 ID_COL    = "ID"
@@ -65,6 +66,7 @@ HORIZON_MONTHS = 12
 #LANDMARKS = [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42, 45, 48]
 #LANDMARKS = [0, 6,  12,  18,  24,  30,  36,  42, 48]
 LANDMARKS = [0, 4, 8, 12, 16,  20,  24, 28,  32,  36, 40,  44, 48]
+DELTA=4
 
 STATIC_COLS = [
     "credit_score", "original_dti", "original_ltv", 
