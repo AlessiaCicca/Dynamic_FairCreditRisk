@@ -2,7 +2,7 @@
 Builds the landmark discrete-time survival dataset from the longitudinal panel.
 n_bins rows per (subject, landmark): covariates frozen at x(L), one row per
 future bin (L+delta*j, L+delta*(j+1)]. Target event_bin = default within that bin.
-Rows censored before the bin end are dropped (exposure-correct).
+Rows censored before the bin end are dropped
 
 """
 
@@ -33,34 +33,46 @@ def build_dynamic(
     # - keeps only subjects still at risk — those who have not yet experienced the event
     # - computes future_event = 1 if default occurs between L and L+horizon
 
+    # Number of intervals
     n_bins = horizon // delta
     last_obs = df.groupby(id_col)[time_col].max()  
     lm_rows = []
     
     for L in landmarks:
-        snap0 = df[df[time_col] == L].copy()                       # x(L): foto a L
+        # Landamarking require covariate fixed at L: x(L)
+        snap0 = df[df[time_col] == L].copy()      
+        # Mantain only subjects at risk
         snap0 = snap0[snap0[first_event_col].isna() | (snap0[first_event_col] > L)].copy()
         snap0["_last_obs"] = snap0[id_col].map(last_obs)
 
+        # Loop on BIN
         for j in range(n_bins):
-            b0 = L + delta * j          # inizio bin
-            b1 = L + delta * (j + 1)    # fine bin
+            # Bin -> (b0, b1]
+            b0 = L + delta * j        
+            b1 = L + delta * (j + 1)  
             fe = snap0[first_event_col]
 
-            ev       = fe.notna() & (fe > b0) & (fe <= b1)         # default in questo bin
-            at_risk  = fe.isna()  | (fe > b0)                      # vivo all'inizio del bin
-            observed = ev | (snap0["_last_obs"] >= b1)             # osservato fino a fine bin (censura)
+            # Default in the bin
+            ev       = fe.notna() & (fe > b0) & (fe <= b1)
+            # At risk in the bin
+            at_risk  = fe.isna()  | (fe > b0)      
+            # Observed until the end of the bin
+            observed = ev | (snap0["_last_obs"] >= b1) 
 
-            row = snap0[at_risk & observed].copy()                 # x(L) RIPETUTE, non ri-snapshot
+            # All bin should have the same covariate x(L)
+            row = snap0[at_risk & observed].copy()
+
+            # Target
             row["event_bin"] = (
                 row[first_event_col].notna()
                 & (row[first_event_col] > b0)
                 & (row[first_event_col] <= b1)
             ).astype(np.int8)
             row["landmark"] = np.int8(L)
-            row["bin_time"] = np.int16(b0)                         # età-prestito al bin (clock di hazard)
+            row["bin_time"] = np.int16(b0)
             lm_rows.append(row)
 
+    # Final dataset
     landmark_df = pd.concat(lm_rows, ignore_index=True)
     del lm_rows
 
@@ -72,12 +84,12 @@ def build_dynamic(
     cats              = enc_cat.transform(landmark_df[cat_cols])
     cat_feature_names = list(enc_cat.get_feature_names_out(cat_cols))
 
-    # Temporal baseline hazard: one-hot of bin_time (loan age at the bin), NOT landmark
+    # Temporal baseline hazard: one-hot of bin_time (loan age at the bin)
     all_bin_times = sorted({L + delta * j for L in landmarks for j in range(n_bins)})
     enc_lmk = OneHotEncoder(handle_unknown="ignore", sparse_output=False, dtype=np.float32)
     enc_lmk.fit(np.array(all_bin_times).reshape(-1, 1))
     lmk_oh            = enc_lmk.transform(landmark_df[["bin_time"]])
-    lmk_feature_names = [f"bt_{t}" for t in all_bin_times]
+    lmk_feature_names = [f"bin_{t}" for t in all_bin_times]
     
     all_num_cols = static_cols + tvc_cols
 
