@@ -30,7 +30,25 @@ def find_best_threshold(y_true, p, max_th_quantile = 0.90):
     f1_scores[thresholds > max_th] = 0
     return float(thresholds[np.argmax(f1_scores)]) if len(thresholds) > 0 else 0.5
 
-
+# From hazard per bin to PD(L,L+h)
+# Same function of main run
+def _collapse_fold(hazard, event_bin, ids, lmk, n_bins, complete_only=True):
+    h = np.clip(hazard, 1e-7, 1 - 1e-7)
+    d = pd.DataFrame({
+        "id": ids, "L": lmk,
+        "log1mh": np.log1p(-h),
+        "ev": event_bin,
+    })
+    g = d.groupby(["id", "L"], sort=False)
+    out = pd.DataFrame({
+        "pdh": 1.0 - np.exp(g["log1mh"].sum()),
+        "yh":  g["ev"].max(),
+        "n":   g.size(),
+    }).reset_index()
+    if complete_only:
+        out = out[out["n"] == n_bins]
+    return out
+    
 #   AUC, Brier score, F1 for single fold
 def metrics_all(y_true, p,threshold = 0.5):
     p   = np.clip(p, 0, 1)
@@ -54,7 +72,7 @@ def agg_mean_sd(list_of_dicts: list) -> dict:
 def run_cv(X, y, groups, sensitive,
            time_arr=None, subj_ids=None,
            model_name="", n_splits=5,
-           landmarks=None, 
+           landmarks=None,  collapse_pdh=False, n_bins=None,
            **train_kwargs):
     # GroupKFold splits by subject — same subject never in both train and test
     gkf          = GroupKFold(n_splits=n_splits)
@@ -78,20 +96,31 @@ def run_cv(X, y, groups, sensitive,
         )
         # store test predictions in the OOF array
         oof_preds[te] = p_te
-        # threshold computed on train fold to avoid data leakage
-        best_th       = find_best_threshold(y[tr], p_tr)
-        thresholds.append(best_th)
-        # compute AUC, Brier, F1 on test fold
-        metrics_list.append(metrics_all(y[te].astype(int), p_te, threshold=best_th))
+
+
+        oof_preds[te] = p_te
+
+        if collapse_pdh:
+            tr_pdh = _collapse_fold(p_tr, y[tr], groups[tr], time_arr[tr], n_bins)
+            te_pdh = _collapse_fold(p_te, y[te], groups[te], time_arr[te], n_bins)
+
+            best_th = find_best_threshold(tr_pdh["yh"], tr_pdh["pdh"]) 
+            thresholds.append(best_th)
+            metrics_list.append(
+                metrics_all(te_pdh["yh"].astype(int), te_pdh["pdh"], threshold=best_th)
+            )
+            auc_print = metrics_list[-1]["AUC"]
+        else:
+            best_th = find_best_threshold(y[tr], p_tr)
+            thresholds.append(best_th)
+            metrics_list.append(metrics_all(y[te].astype(int), p_te, threshold=best_th))
+            auc_print = metrics_list[-1]["AUC"]
+
         print(
             f"  Fold {fold + 1}  |  "
-            f"  pred_mean_train={p_tr.mean():.4f}  |  "
             f"  pred_mean_test={p_te.mean():.4f}"
-            f"  |  AUC: {metrics_list[-1]['AUC']:.4f}  |  "
-            f"  th={best_th:.5f}"
+            f"  |  AUC: {auc_print:.4f}  |  th={best_th:.5f}"
         )
-
-       # last fold only: save model and scaler for inference on test sets
         if fold == n_splits - 1:
             model_last  = model
             scaler_last = scaler
