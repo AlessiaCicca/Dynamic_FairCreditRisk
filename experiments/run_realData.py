@@ -388,10 +388,14 @@ def main():
     del df; gc.collect()
 
     #  CV 
+
+    t_min = float(min(cfg["landmarks"]))
+    t_max = float(max(cfg["landmarks"]))
+
     train_kwargs = dict(
         beta=cfg["beta"], alpha=cfg["alpha"],
-        eo_mode_d=cfg["eo_mode_d"], 
-        schedule_mode_d=cfg["schedule_mode_d"],
+        eo_mode_d=cfg["eo_mode_d"], schedule_mode_d=cfg["schedule_mode_d"],
+        t_min=t_min, t_max=t_max,
     )
 
     print("\nTraining M_STATIC...")
