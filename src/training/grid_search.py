@@ -3,10 +3,6 @@ Grid search on the AUC vs Separation trade-off for the two MLP models.
 Separation is measured as AUC of the fairness curve over time,
 consistent with the main run.
 
-NOTE: oltre a `separation_auc` (valutata alla soglia F1-ottima di OGNI cella),
-viene calcolata `separation_auc_fixed`, valutata alla soglia del BASELINE
-(coef=0) del rispettivo modello. Questo isola l'effetto del penalty dal
-movimento della soglia F1, senza modificare la metrica di fairness.
 """
 
 import numpy as np
@@ -47,7 +43,8 @@ def _run_cv(
     n_folds=5,
     eo_mode_d="mean",
     schedule_mode_d="flat",
-    fixed_th=None):          # NEW: soglia del baseline; se data, calcola anche sep a soglia fissa
+    fixed_th=None,          
+    n_bins=None):            
 
     # Seed setup
     np.random.seed(42)
@@ -83,24 +80,58 @@ def _run_cv(
 
     th = float(np.mean(thresholds))
 
-    # Mean OOF AUC
-    fold_aucs = []
-    for _, te_idx in gkf.split(X, y, grp):
-        if len(np.unique(y[te_idx])) > 1:
-            fold_aucs.append(
-                roc_auc_score(y[te_idx].astype(int), oof_preds[te_idx])
-            )
+    #  hazard per-bin -> PD-H 
+    if time_arr is not None:
+        if n_bins is None:
+            raise ValueError("n_bins required")
+        h = np.clip(oof_preds, 1e-7, 1 - 1e-7)
+        dfp = pd.DataFrame({
+            "id": grp, "L": time_arr,
+            "log1mh": np.log1p(-h),
+            "ev": y,
+            "sens": sens,
+        })
+        g    = dfp.groupby(["id", "L"], sort=False)
+        surv = np.exp(g["log1mh"].sum())
+        pdh  = (1.0 - surv).rename("pdh")
+        yh   = g["ev"].max().rename("yh")
+        sh   = g["sens"].first().rename("sh") 
+        cnt  = g.size().rename("n")
+        Lh   = g["L"].first().rename("Lh")
+        coll = pd.concat([pdh, yh, sh, cnt, Lh], axis=1).reset_index(drop=True)
+        coll = coll[coll["n"] == n_bins]       
+        
+        eval_preds = coll["pdh"].to_numpy()
+        eval_y     = coll["yh"].to_numpy().astype(int)
+        eval_sens  = coll["sh"].to_numpy()
+        eval_time  = coll["Lh"].to_numpy()
+    else:
+        eval_preds = oof_preds
+        eval_y     = y.astype(int)
+        eval_sens  = sens
+        eval_time  = None
 
-    # ---- separation valutata a una soglia data (helper) ----
+    # Mean OOF AUC on PD-H
+    fold_aucs = []
+    if eval_time is not None:
+        if len(np.unique(eval_y)) > 1:
+            fold_aucs.append(roc_auc_score(eval_y, eval_preds))
+    else:
+        for _, te_idx in gkf.split(X, y, grp):
+            if len(np.unique(y[te_idx])) > 1:
+                fold_aucs.append(
+                    roc_auc_score(y[te_idx].astype(int), oof_preds[te_idx])
+                )
+
     def compute_separation(eval_th):
-        if time_arr is not None:
+        if eval_time is not None:
             time_rows = []
-            for t in sorted(np.unique(time_arr)):
-                mask = time_arr == t
+            for t in sorted(np.unique(eval_time)):
+                mask = eval_time == t
                 if mask.sum() < 20:
                     continue
                 yt_f, yp_f, sn_f = filter_sensitive(
-                    y[mask].astype(int), oof_preds[mask], sens[mask]
+                    eval_y[mask], eval_preds[mask], eval_sens[mask]
                 )
                 if len(np.unique(yt_f)) < 2 or len(np.unique(sn_f)) < 2:
                     continue
@@ -129,7 +160,7 @@ def _run_cv(
             return sep_auc, sep_mean
         else:
             yt_f, yp_f, sn_f = filter_sensitive(
-                y.astype(int), oof_preds, sens
+                eval_y, eval_preds, eval_sens
             )
             yb_f   = (yp_f >= eval_th).astype(int)
             res    = fairness_metrics(yt_f, yp_f, yb_f, sn_f,
@@ -138,10 +169,8 @@ def _run_cv(
             s = axioms.get("separation", np.nan)
             return s, s
 
-    # separation alla soglia F1 di QUESTA cella (comportamento storico, invariato)
     sep_auc, sep_mean = compute_separation(th)
 
-    # separation alla soglia del BASELINE (se fornita)
     if fixed_th is not None:
         sep_auc_fixed, sep_mean_fixed = compute_separation(float(fixed_th))
     else:
@@ -168,6 +197,7 @@ def run_grid_search(
     n_folds=5,
     eo_mode_d="mean",
     schedule_mode_d="flat",
+    n_bins=None,               
     out_dir=Path("outputs"),
     run_tag="run"):
 
@@ -180,7 +210,7 @@ def run_grid_search(
     print("=" * 60)
     print("GRID SEARCH — M_STATIC")
     print("=" * 60)
-    static_base_th = None      # soglia del baseline statico (beta=0)
+    static_base_th = None     
     for beta in betas:
         print(f"  beta={beta:.2f} ...", end=" ", flush=True)
         r = _run_cv(
@@ -191,7 +221,6 @@ def run_grid_search(
             fixed_th=static_base_th,
         )
         if beta == 0.0:
-            # baseline: cattura la soglia e, per definizione, sep_fixed == sep
             static_base_th = r["threshold"]
             r["separation_auc_fixed"]  = r["separation_auc"]
             r["separation_mean_fixed"] = r["separation_mean"]
@@ -205,7 +234,7 @@ def run_grid_search(
     print("\n" + "=" * 60)
     print("GRID SEARCH — M_DYNAMIC")
     print("=" * 60)
-    dyn_base_th = None         # soglia del baseline dinamico (alpha=0)
+    dyn_base_th = None    
     for alpha in alphas:
         print(f"  alpha={alpha:.2f} ...", end=" ", flush=True)
         r = _run_cv(
@@ -215,6 +244,7 @@ def run_grid_search(
             eo_mode_d=eo_mode_d,
             schedule_mode_d=schedule_mode_d,
             fixed_th=dyn_base_th,
+            n_bins=n_bins,
         )
         if alpha == 0.0:
             dyn_base_th = r["threshold"]
