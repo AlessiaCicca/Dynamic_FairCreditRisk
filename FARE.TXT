@@ -6,47 +6,8 @@ Controlla sampling che usa derived_sex invece di applicant_sex
 DECAY FUNZIONA SU SEX 
 
 
-DA CONTROLLARE — censoring dentro la finestra di orizzonte
-Cos'è. In build_dynamic.py la label future_event vale 1 se il default cade in (L, L+horizon], 0 in tutti gli altri casi. Il problema è che negli y = 0 finiscono mescolati due gruppi diversi:
-
-(a) prestiti osservati per tutta la finestra senza default → veri non-eventi ✓
-(b) prestiti che escono dall'osservazione prima di L+horizon senza aver defaultato (prepayment o fine dei dati) → sono censurati, ma vengono etichettati 0 lo stesso ✗
-
-Il codice non li distingue.
-Perché è un problema. Per un prestito censurato a L+2 con horizon = 12, ho osservato solo 2 mesi su 12. Non so cosa sarebbe successo negli altri 10. Etichettarlo 0 significa assumere "non avrebbe defaultato" — un'assunzione che non posso fare. È esattamente il censoring che la survival analysis serve a gestire. Se questa quota è grossa, definire il modello "survival model" non regge davanti alla commissione.
-Controllo concreto. Per ogni landmark L, tra le righe con y = 0, conta quante hanno: FirstDefaultAge = NaN e ultima età osservata del prestito (max loan_age) < L + horizon. Quella è la quota di censurati-nella-finestra trattati come non-eventi.
-
-se è piccola (diciamo < 5%) → la dichiari in tesi e vai avanti;
-se è significativa → va corretta.
-
-Come si risolve (due opzioni).
-
-Filtro (semplice): nella label tieni solo i prestiti con follow-up completo, cioè last_age ≥ L + horizon oppure default entro la finestra. Pulisce l'etichetta, costa un po' di dati.
-
-
-Da qui un parametro di design tuo: la griglia dei landmark controlla quanto è dinamico il modello. Landmark fitti (es. ogni mese, {0,1,2,… }\{0,1,2,\dots\}
-{0,1,2,…}) → tanti snapshot, modello molto reattivo ma più pesante. Landmark radi (come {0,3,6}\{0,3,6\}
-{0,3,6}) → meno aggiornamenti, più leggero. Se volessi usare lo stato del mese 11 come input, la mossa sarebbe semplicemente aggiungere 11 alla griglia dei landmark. SI PUO' GIUSTIFICARE CON UN TREND A 3 ANNI
-
-
 
 AGGIUNGI PLOT PROBABILITY DI DEFAULT O SURVIVAL
 
-
-VEDERE NEL DETTAGLIO LA PARTE DINAMICA: https://github.com/thehanlab/dynamicLM
-Sì, esatto — hai capito il meccanismo. Al landmark 1, con la foto Z(1) congelata, produci un hazard per ogni mese della finestra: h₂, h₃, h₄, h₅, h₆. Ognuno è "default in quel mese, dato che è arrivato vivo all'inizio del mese, data la foto a 1". E — punto cruciale che conferma la tua preoccupazione di prima — tutti e cinque usano Z(1), mai le feature dei mesi 2..6. Li calcoli tutti in un colpo solo al momento della predizione, senza aspettare né osservare niente del futuro. Quindi è landmarking valido: niente feature future.
-Una sola cosa da precisare, perché "la probabilità di default a 6" può voler dire tre cose diverse, e non vanno confuse:
-
-Default entro il mese 6 (cumulata sulla finestra): 1 − (1−h₂)(1−h₃)(1−h₄)(1−h₅)(1−h₆). Questa è "la probabilità che defaulti in un punto qualsiasi dei prossimi 5 mesi" — è l'output tipico del landmarking (il rischio a w-mesi).
-Default esattamente nel mese 6 (marginale): h₆ · S(5|1) = hazard al 6 × probabilità di essere sopravvissuto fino a 5.
-L'hazard al 6 da solo: h₆, condizionato all'essere arrivato vivo a 5.
-
-Con numeri, foto Z(1) fissa, e hazard [0.01, 0.015, 0.02, 0.02, 0.03] per i mesi 2–6:
-S(6|1) = 0.99·0.985·0.98·0.98·0.97 = 0.908
-→ default entro 6 = 1 − 0.908 = 9.2%      (cumulata, opzione 1)
-→ default esattamente a 6 = 0.03·0.937 = 2.8%   (marginale, opzione 2)
-→ hazard a 6 = 3%                          (condizionato, opzione 3)
-Quasi sempre quella che intendi con "probabilità di default a 6" è la 1 (entro 6), ed è quella che ricostruisci incatenando gli hazard. Quindi sì: produci h₂…h₆ dalla foto a 1, li incateni, e ottieni la probabilità di default entro il mese 6.
-Poi — qui scatta la dinamicità — quando arrivi al landmark 2 rifai la foto, Z(2) fresca, e rigeneri la finestra (3, 4, 5, 6, 7…) con le informazioni aggiornate. La traiettoria di rischio del prestito si muove perché cambia la foto a ogni landmark, non perché guardi avanti dentro la finestra. Dentro la finestra resti sempre fermo alla foto del landmark.
 
 VERIFICA PERCH' NON C'è LOAN AMOUNT O CURRENTUBP
