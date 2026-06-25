@@ -64,70 +64,33 @@ torch.manual_seed(SEED)
 torch.cuda.manual_seed(SEED)
 torch.backends.cudnn.deterministic = True
 
-# ===== DEBUG: il SEED di config è arrivato fin qui? =====
-print(f"[DEBUG seed @import] config.SEED={SEED}  "
-      f"torch.initial_seed={torch.initial_seed()}  "
-      f"np_state0={np.random.get_state()[1][0]}")
-# =======================================================
 
-
-def collapse_to_pd12(oof_hazard, event_bin, ids, lmk_vals, n_bins,
+# From hazard per_bin to PD(L, L+horizon)
+def collapse_to_pdH(oof_hazard, event_bin, ids, lmk_vals, n_bins,
                      complete_only=True):
-    """Da hazard per-bin (OOF) a PD(L, L+horizon) e label y12 per (soggetto, L)."""
+    # Numerical stability
     h = np.clip(oof_hazard, 1e-7, 1 - 1e-7)
     dfp = pd.DataFrame({
         "id": ids, "L": lmk_vals,
-        "log1mh": np.log1p(-h),
+         # log(1 - hazard) -> to translate product in sum
+        "log1mh": np.log1p(-h),  
         "ev": event_bin,
     })
+    # Group bin of the same subject and landmark
     g    = dfp.groupby(["id", "L"], sort=False)
-    surv = np.exp(g["log1mh"].sum())
-    pd12 = (1.0 - surv).rename("pd12")
-    y12  = g["ev"].max().rename("y12")
+    # prod(1 - h) = exp(sum(log(1 - h)))
+    surv = np.exp(g["log1mh"].sum())  
+    # The probability of default is 1-Surv 
+    pdh = (1.0 - surv).rename("pdh")
+    # Indicate if there is the event in any of the bin 
+    yh  = g["ev"].max().rename("yh")
+    # Number of bin for (id, L)
     cnt  = g.size().rename("n")
-    out  = pd.concat([pd12, y12, cnt], axis=1).reset_index()
-    if complete_only:
+    out  = pd.concat([pdh, yh, cnt], axis=1).reset_index()
+    # Require all bins                   
+    if complete_only:   
         out = out[out["n"] == n_bins]
     return out
-
-
-# ===== DEBUG: conteggi eventi per landmark x gruppo (DYNAMIC per-bin) =====
-def debug_event_counts(dynamic_data, label="DYNAMIC per-bin"):
-    lmk = np.asarray(dynamic_data["lmk_vals"])
-    y   = np.asarray(dynamic_data["y"])
-    s   = np.asarray(dynamic_data["sensitive"])
-    print(f"\n[DEBUG] conteggi eventi per landmark x gruppo ({label})")
-    print(f"  {'L':>3} | {'g':>1} | {'n_rows':>7} | {'n_pos':>5} | {'prev':>6}")
-    for L in sorted(np.unique(lmk)):
-        for g in [0, 1]:
-            mg = (lmk == L) & (s == g)
-            n  = int(mg.sum())
-            npos = int(y[mg].sum()) if n else 0
-            prev = (y[mg].mean() if n else float("nan"))
-            print(f"  {int(L):3d} | {g:1d} | {n:7d} | {npos:5d} | {prev:6.4f}")
-# =========================================================================
-
-
-# ===== DEBUG: decomposizione con segno dei gap (spiega la metrica separation) =====
-def debug_signed_gaps(mname, yt_f, yb_f, sn_f):
-    yt = np.asarray(yt_f); yb = np.asarray(yb_f); s = np.asarray(sn_f)
-    def rates(g):
-        m = s == g
-        pos = (yt[m] == 1); neg = (yt[m] == 0)
-        pred = yb[m]
-        tpr = pred[pos].mean() if pos.sum() else float("nan")
-        fpr = pred[neg].mean() if neg.sum() else float("nan")
-        return tpr, fpr, 1.0 - tpr
-    t0, f0, n0 = rates(0)
-    t1, f1, n1 = rates(1)
-    fpr_gap = f1 - f0
-    fnr_gap = n1 - n0
-    sum_abs  = abs(fpr_gap) + abs(fnr_gap)          # quello che minimizza il PENALTY (vecchio)
-    abs_sum  = abs(fpr_gap + fnr_gap)               # quello che misura la METRICA separation*2
-    print(f"   [DEBUG {mname}] "
-          f"fpr_gap={fpr_gap:+.4f}  fnr_gap={fnr_gap:+.4f}  "
-          f"| sum|.|={sum_abs:.4f}  |sum|={abs_sum:.4f}  sep(|sum|/2)={abs_sum/2:.4f}")
-# ================================================================================
 
 
 def parse_args():
@@ -194,17 +157,10 @@ def load_raw(data_dir, scenario):
     )
     df = df.merge(first_event, on=ID_COL, how="left")
 
-    # ===== DEBUG: composizione gruppi e base-rate per gruppo =====
+   
     n_ids = df[ID_COL].nunique()
     ev_per_id = df.groupby(ID_COL)["FirstEventTime"].first().notna()
     sens_per  = df.groupby(ID_COL)["sens_loan"].first()
-    print(f"\n[DEBUG raw] scenario={scenario}  n_ids={n_ids}")
-    for g in sorted(sens_per.dropna().unique()):
-        ids_g = sens_per[sens_per == g].index
-        n_g   = len(ids_g)
-        rate  = ev_per_id.loc[ids_g].mean()
-        print(f"  gruppo s={int(g)}: n_id={n_g:6d}  default_rate={rate:.4f}")
-    # =============================================================
 
     return df, trend_cols
 
@@ -228,9 +184,6 @@ def run_fairness_analysis(
         yb_f = (yp_f >= th).astype(int)
         res  = fairness_metrics(yt_f, yp_f, yb_f, sn_f, GROUP_NAMES_SIM, threshold=th)
         print_fairness_report(mname, res, GROUP_NAMES_SIM, label="AGGREGATE")
-        # ===== DEBUG: decomposizione con segno dei gap =====
-        debug_signed_gaps(mname, yt_f, yb_f, sn_f)
-        # ===================================================
         agg_rows.append(res_to_row(res, GROUP_NAMES_SIM, {"model": mname}))
 
     df_agg = pd.DataFrame(agg_rows)
@@ -296,10 +249,6 @@ def run_fairness_analysis(
 def main():
     args = parse_args()
     cfg  = load_config(args.config, args)
-
-    # ===== DEBUG: seed effettivo a inizio main =====
-    print(f"[DEBUG seed @main] config.SEED={SEED}  torch.initial_seed={torch.initial_seed()}")
-    # ===============================================
 
     # Output directory
     out_dir = Path(args.out_dir) if args.out_dir else \
@@ -367,10 +316,6 @@ def main():
         sens_col="sens_loan", enc_cat=enc_cat,
     )
 
-    # ===== DEBUG: conteggi eventi per landmark x gruppo (simulati) =====
-    debug_event_counts(dynamic_data)
-    # ==================================================================
-
     del df; gc.collect()
 
     # Cross-validation
@@ -386,6 +331,7 @@ def main():
         groups=static_data["groups"], sensitive=static_data["sensitive"],
         model_name="static", n_splits=cfg["n_folds"], **train_kwargs,
     )
+    n_bins = cfg["horizon"] // cfg.get("delta", 1)
 
     print("\nTraining M_DYNAMIC...")
     res_dynamic = run_cv(
@@ -393,25 +339,10 @@ def main():
         groups=dynamic_data["groups"], sensitive=dynamic_data["sensitive"],
         time_arr=dynamic_data["lmk_vals"], subj_ids=dynamic_data["groups"],
         model_name="dynamic", n_splits=cfg["n_folds"],
-        landmarks=cfg["landmarks"], **train_kwargs,
+        landmarks=cfg["landmarks"],  collapse_pdh=True, n_bins=n_bins, **train_kwargs,
     )
 
-    # ===== DEBUG: lo static_oof cambia tra run/seed? (firma rapida) =====
-    so = res_static["oof_preds"]
-    print(f"[DEBUG static_oof] mean={so.mean():.6f}  std={so.std():.6f}  "
-          f"sum={so.sum():.4f}  hash={hash(so.tobytes()) & 0xffffffff}")
-    do = res_dynamic["oof_preds"]
-    print(f"[DEBUG dyn_oof]    mean={do.mean():.6f}  std={do.std():.6f}  "
-          f"sum={do.sum():.4f}  hash={hash(do.tobytes()) & 0xffffffff}")
-    # Se l'hash dello static_oof è identico tra due seed diversi -> il seed
-    # non sta cambiando lo split/init dello static. Cambia il SEED in config
-    # e rilancia: questi due hash DEVONO cambiare.
-    # ===================================================================
-
-    # --- COLLAPSE hazard per-bin -> PD-(L, L+horizon) ---
-    n_bins = cfg["horizon"] // cfg.get("delta", 1)
-
-    pd12_df = collapse_to_pd12(
+    pdh_df = collapse_to_pdh(
         oof_hazard    = res_dynamic["oof_preds"],
         event_bin     = dynamic_data["y"],
         ids           = dynamic_data["groups"],
@@ -419,28 +350,29 @@ def main():
         n_bins        = n_bins,
         complete_only = True,
     )
+  
+    # Indicate the probability of default at from L to h
+    dyn_pd  = pdh_df["pdh"].to_numpy()
+    # Indicate if there is the event in any of the bin 
+    dyn_yh = pdh_df["yh"].to_numpy()
+    dyn_L   = pdh_df["L"].to_numpy()
+    dyn_ids = pdh_df["id"].to_numpy()
 
-    dyn_pd  = pd12_df["pd12"].to_numpy()
-    dyn_y12 = pd12_df["y12"].to_numpy()
-    dyn_L   = pd12_df["L"].to_numpy()
-    dyn_ids = pd12_df["id"].to_numpy()
+    th_dynamic = find_best_threshold(dyn_yh, dyn_pd)
 
-    th_dynamic = find_best_threshold(dyn_y12, dyn_pd)
-    dyn_auc    = roc_auc_score(dyn_y12, dyn_pd)
-    dyn_brier  = brier_score_loss(dyn_y12, dyn_pd)
-    print(f"\nM_DYNAMIC (PD-12) AUC={dyn_auc:.4f}  Brier={dyn_brier:.4f}")
-
-    # --- collapse del sensitive a livello (soggetto, L) ---
     bin_ids = dynamic_data["groups"]
     id2g = pd.Series(dynamic_data["sensitive"], index=bin_ids)
     id2g = id2g[~id2g.index.duplicated(keep="first")]
     dyn_sens_collapsed = pd.Series(dyn_ids).map(id2g).to_numpy()
 
     # Summary
-    summary = pd.DataFrame([
-        {"Model": "M_STATIC",  **res_static["summary"]},
-        {"Model": "M_DYNAMIC", "AUC_Mean": dyn_auc, "Brier_Mean": dyn_brier},
-    ])
+
+    summary = build_summary_table({
+        "M_STATIC":  res_static,
+        "M_DYNAMIC": res_dynamic,
+    })
+
+  
     print("\n=== CV RESULTS ===")
     print(summary.to_string(index=False))
     summary.to_csv(out_dir / "cv_results.csv", index=False)
@@ -464,9 +396,6 @@ def main():
     print("="*60)
 
     th_static = res_static["threshold"]
-    # ===== DEBUG: soglie usate per la fairness =====
-    print(f"[DEBUG th] th_static={th_static:.5f}  th_dynamic={th_dynamic:.5f}")
-    # ===============================================
 
     df_agg, df_dyn_lmk, df_auc = run_fairness_analysis(
         y_static=static_data["y"],
