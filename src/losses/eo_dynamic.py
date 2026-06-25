@@ -122,10 +122,10 @@ def equalized_odds_loss_dynamic(
             label_pred, sensitive, label_true, time_vals)
         already_prob = False
 
-      gaps = _per_landmark_gaps(
-        pred_use, sens_use, true_use, time_use, already_prob,
-        n_pos_min, current_epoch, time_schedule_mode,
-        t_min, t_max, eps)
+    gaps = _per_landmark_gaps(
+      pred_use, sens_use, true_use, time_use, already_prob,
+      n_pos_min, current_epoch, time_schedule_mode,
+      t_min, t_max, eps)
 
     if len(gaps) == 0:
         return torch.tensor(0.0, device=device)            
