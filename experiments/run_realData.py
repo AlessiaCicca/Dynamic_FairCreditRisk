@@ -59,22 +59,30 @@ torch.manual_seed(SEED)
 torch.cuda.manual_seed(SEED)
 torch.backends.cudnn.deterministic = True
 
-def collapse_to_pd12(oof_hazard, event_bin, ids, lmk_vals, n_bins,
+# From hazard per_bin to PD(L, L+horizon)
+def collapse_to_pdH(oof_hazard, event_bin, ids, lmk_vals, n_bins,
                      complete_only=True):
-    """Da hazard per-bin (OOF) a PD(L, L+horizon) e label y12 per (soggetto, L)."""
+    # Numerical stability
     h = np.clip(oof_hazard, 1e-7, 1 - 1e-7)
     dfp = pd.DataFrame({
         "id": ids, "L": lmk_vals,
-        "log1mh": np.log1p(-h),           # log(1 - hazard)
+         # log(1 - hazard) -> to translate product in sum
+        "log1mh": np.log1p(-h),  
         "ev": event_bin,
     })
+    # Group bin of the same subject and landmark
     g    = dfp.groupby(["id", "L"], sort=False)
-    surv = np.exp(g["log1mh"].sum())      # prod(1 - h)
-    pd12 = (1.0 - surv).rename("pd12")
-    y12  = g["ev"].max().rename("y12")    # default in QUALCHE bin = default in (L, L+12]
+    # prod(1 - h) = exp(sum(log(1 - h)))
+    surv = np.exp(g["log1mh"].sum())  
+    # The probability of default is 1-Surv 
+    pdh = (1.0 - surv).rename("pdh")
+    # Indicate if there is the event in any of the bin 
+    yh  = g["ev"].max().rename("yh")
+    # Number of bin for (id, L)
     cnt  = g.size().rename("n")
-    out  = pd.concat([pd12, y12, cnt], axis=1).reset_index()
-    if complete_only:                      # solo finestre osservate per intero (vero PD-12)
+    out  = pd.concat([pdh, yh, cnt], axis=1).reset_index()
+    # Require all bins                   
+    if complete_only:   
         out = out[out["n"] == n_bins]
     return out
 
@@ -132,7 +140,7 @@ def run_feature_importance(static_data, dynamic_data,
         y      = data["y"]
         feature_names = data["feature_names"]
 
-        # Scala con lo stesso scaler usato in training
+        # Scale with the same scaler used in training
         X_s = scaler.transform(X).astype(np.float32)
         X_s = np.nan_to_num(X_s, nan=0., posinf=5., neginf=-5.)
 
@@ -148,13 +156,14 @@ def run_feature_importance(static_data, dynamic_data,
         importances = []
         for i in range(X_s.shape[1]):
             X_perm = X_s.copy()
-            np.random.shuffle(X_perm[:, i])   # mescola la feature i
+            np.random.shuffle(X_perm[:, i])  
             with torch.no_grad():
                 perm_preds = torch.sigmoid(
                     model(torch.tensor(X_perm, device=DEVICE))
                 ).cpu().numpy()
             perm_auc = roc_auc_score(y, perm_preds)
-            importances.append(baseline_auc - perm_auc)  # calo AUC
+            # AUC decrease
+            importances.append(baseline_auc - perm_auc) 
 
         df_imp = pd.DataFrame({
             "feature":    feature_names,
@@ -391,6 +400,8 @@ def main():
         groups=static_data["groups"], sensitive=static_data["sensitive"],
         model_name="static", n_splits=cfg["n_folds"], **train_kwargs,
     )
+        
+    n_bins = cfg["horizon"] // cfg.get("delta", 4)
 
     print("\nTraining M_DYNAMIC...")
     res_dynamic = run_cv(
@@ -398,44 +409,35 @@ def main():
         groups=dynamic_data["groups"], sensitive=dynamic_data["sensitive"],
         time_arr=dynamic_data["lmk_vals"], subj_ids=dynamic_data["groups"],
         model_name="dynamic", n_splits=cfg["n_folds"],
-        landmarks=cfg["landmarks"], **train_kwargs,
+        landmarks=cfg["landmarks"], collapse_pdh=True, n_bins=n_bins, **train_kwargs,
     )
-    
-    n_bins = cfg["horizon"] // cfg.get("delta", 4)
 
-    pd12_df = collapse_to_pd12(
-        oof_hazard = res_dynamic["oof_preds"],
-        event_bin  = dynamic_data["y"],
-        ids        = dynamic_data["groups"],
-        lmk_vals   = dynamic_data["lmk_vals"],
+
+    pdh_df = collapse_to_pdh(
+        oof_hazard = res_dynamic["oof_preds"], # hazard per bin
+        event_bin  = dynamic_data["y"], # Event per bin 
+        ids        = dynamic_data["groups"], # Subject indication
+        lmk_vals   = dynamic_data["lmk_vals"], # Landamrk indication
         n_bins     = n_bins,
         complete_only = True,
     )
     
-    dyn_pd   = pd12_df["pd12"].to_numpy()
-    dyn_y12  = pd12_df["y12"].to_numpy()
-    dyn_L    = pd12_df["L"].to_numpy()
-    dyn_ids  = pd12_df["id"].to_numpy()
+    # Indicate the probability of default at from L to h
+    dyn_pd   = pdh_df["pdh"].to_numpy()
+    # Indicate if there is the event in any of the bin 
+    dyn_yh  = pdh_df["yh"].to_numpy()
+    dyn_L    = pdh_df["L"].to_numpy()
+    dyn_ids  = pdh_df["id"].to_numpy()
     
-    # soglia per le decisioni di fairness, ricalcolata sulla PD-12 (non sugli hazard)
-    th_dynamic = find_best_threshold(dyn_y12, dyn_pd)
-    
-    dyn_auc   = roc_auc_score(dyn_y12, dyn_pd)
-    dyn_brier = brier_score_loss(dyn_y12, dyn_pd)
-    print(f"\nM_DYNAMIC (PD-12) AUC={dyn_auc:.4f}  Brier={dyn_brier:.4f}")
+    # Threshold on pdh
+    th_dynamic = find_best_threshold(dyn_yh, dyn_pd)
 
-
-    '''
     summary = build_summary_table({
         "M_STATIC":  res_static,
         "M_DYNAMIC": res_dynamic,
     })
-    '''
-    summary = pd.DataFrame([
-    {"Model": "M_STATIC",  **res_static["summary"]},
-    {"Model": "M_DYNAMIC", "AUC_Mean": dyn_auc, "Brier_Mean": dyn_brier},
-    ])
-    
+
+
     print("\n=== CV RESULTS ===")
     print(summary.to_string(index=False))
     summary.to_csv(out_dir / "cv_results.csv", index=False)
@@ -471,19 +473,20 @@ def main():
 
     bin_ids = dynamic_data["groups"]
     dyn_sens_collapsed = {}
+    # Assign a unique sensitive attribute per (ID,L)
     for attr, sarr in dyn_sens_by_attr.items():
         id2g = pd.Series(sarr, index=bin_ids)
-        id2g = id2g[~id2g.index.duplicated(keep="first")]   # gruppo costante per id
+        id2g = id2g[~id2g.index.duplicated(keep="first")] 
         dyn_sens_collapsed[attr] = pd.Series(dyn_ids).map(id2g).to_numpy()
 
     df_agg, df_dyn_lmk, df_auc = run_fairness_analysis(
     y_static=static_data["y"],
     static_oof=res_static["oof_preds"],
     sens_by_attr_static=static_sens_by_attr,
-    y_dynamic=dyn_y12,                       # era dynamic_data["y"]
-    dynamic_oof=dyn_pd,                      # era res_dynamic["oof_preds"]
-    sens_by_attr_dynamic=dyn_sens_collapsed, # era dyn_sens_by_attr
-    lmk_vals=dyn_L,                          # era dynamic_data["lmk_vals"]
+    y_dynamic=dyn_yh,                    
+    dynamic_oof=dyn_pd,                      
+    sens_by_attr_dynamic=dyn_sens_collapsed, 
+    lmk_vals=dyn_L,                     
     out_dir=out_dir, cfg=cfg,
     th_static=th_static, th_dynamic=th_dynamic,
     )
@@ -551,7 +554,6 @@ def main():
           for img_path in out_dir.glob(f"*{run_tag}*.png"):
               wandb.log({f"grid_search/{img_path.stem}": wandb.Image(str(img_path))})
           
-
 
     if cfg["use_wandb"]:
         import wandb
