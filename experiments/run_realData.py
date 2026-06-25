@@ -547,6 +547,8 @@ def main():
             betas=cfg["grid_betas"], alphas=cfg["grid_alphas"],
             n_folds=cfg["n_folds"],
             eo_mode_d=cfg["eo_mode_d"],
+            schedule_mode_d=cfg["schedule_mode_d"],  
+            n_bins=cfg["horizon"] // cfg.get("delta", 4),
             out_dir=out_dir, run_tag=run_tag,
         )
         plot_tradeoff(df_grid, out_dir=out_dir, run_tag=run_tag)
