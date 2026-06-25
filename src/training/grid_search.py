@@ -33,6 +33,24 @@ MODEL_STYLES = {
     "M_DYNAMIC": {"color": "#D4612A", "marker": "s", "coef_label": "α"},
 }
 
+def _collapse_fold(hazard, event_bin, ids, lmk, n_bins, complete_only=True):
+    h = np.clip(hazard, 1e-7, 1 - 1e-7)
+    d = pd.DataFrame({
+        "id": ids, "L": lmk,
+        "log1mh": np.log1p(-h),
+        "ev": event_bin,
+    })
+    g = d.groupby(["id", "L"], sort=False)
+    out = pd.DataFrame({
+        "pdh": 1.0 - np.exp(g["log1mh"].sum()),
+        "yh":  g["ev"].max(),
+        "n":   g.size(),
+    }).reset_index()
+    if complete_only:
+        out = out[out["n"] == n_bins]
+    return out
+    
+
 
 # MAIN RUN to which we will assign all the different value for the coefficients
 def _run_cv(
@@ -46,18 +64,13 @@ def _run_cv(
     fixed_th=None,          
     n_bins=None):            
 
-    # Seed setup
-    np.random.seed(42)
-    torch.manual_seed(42)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(42)
-
     # Splits the data into 5 folds ensuring that the same loan is not both in train and test
     gkf       = GroupKFold(n_splits=n_folds)
     # Empty Array to save OOF predictions
     oof_preds = np.zeros(len(y), dtype=np.float64)
 
     thresholds = []
+    fold_aucs = []   
 
     # For each fold: train the model on the train, predict on the test
     for tr_idx, te_idx in gkf.split(X, y, grp):
@@ -75,7 +88,16 @@ def _run_cv(
         )
         oof_preds[te_idx] = p_te
         # Find the threshold that maximize F1
-        best_th = find_best_threshold(y[tr_idx], p_tr)
+        if time_arr is not None:
+            tr_pdh = _collapse_fold(p_tr, y[tr_idx], grp[tr_idx], time_arr[tr_idx], n_bins)
+            te_pdh = _collapse_fold(p_te, y[te_idx], grp[te_idx], time_arr[te_idx], n_bins)
+            best_th = find_best_threshold(tr_pdh["yh"], tr_pdh["pdh"])
+            if len(np.unique(te_pdh["yh"])) > 1:
+                fold_aucs.append(roc_auc_score(te_pdh["yh"].astype(int), te_pdh["pdh"]))
+        else:
+            best_th = find_best_threshold(y[tr_idx], p_tr)
+            if len(np.unique(y[te_idx])) > 1:
+                fold_aucs.append(roc_auc_score(y[te_idx].astype(int), p_te))
         thresholds.append(best_th)
 
     th = float(np.mean(thresholds))
@@ -111,24 +133,15 @@ def _run_cv(
         eval_sens  = sens
         eval_time  = None
 
-    # Mean OOF AUC on PD-H
-    fold_aucs = []
-    if eval_time is not None:
-        if len(np.unique(eval_y)) > 1:
-            fold_aucs.append(roc_auc_score(eval_y, eval_preds))
-    else:
-        for _, te_idx in gkf.split(X, y, grp):
-            if len(np.unique(y[te_idx])) > 1:
-                fold_aucs.append(
-                    roc_auc_score(y[te_idx].astype(int), oof_preds[te_idx])
-                )
-
+  
     def compute_separation(eval_th):
         if eval_time is not None:
             time_rows = []
             for t in sorted(np.unique(eval_time)):
                 mask = eval_time == t
-                if mask.sum() < 20:
+                sn_m = eval_sens[mask] 
+                counts = pd.Series(sn_m).value_counts()
+                if counts.min() < 50:
                     continue
                 yt_f, yp_f, sn_f = filter_sensitive(
                     eval_y[mask], eval_preds[mask], eval_sens[mask]
@@ -200,6 +213,12 @@ def run_grid_search(
     n_bins=None,               
     out_dir=Path("outputs"),
     run_tag="run"):
+    
+    # Seed setup
+    np.random.seed(42)
+    torch.manual_seed(42)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(42)
 
     if betas  is None: betas  = DEFAULT_BETAS
     if alphas is None: alphas = DEFAULT_ALPHAS

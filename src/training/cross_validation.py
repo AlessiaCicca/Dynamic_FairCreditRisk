@@ -112,6 +112,7 @@ def run_cv(X, y, groups, sensitive,
             auc_print = metrics_list[-1]["AUC"]
         else:
             best_th = find_best_threshold(y[tr], p_tr)
+            
             thresholds.append(best_th)
             metrics_list.append(metrics_all(y[te].astype(int), p_te, threshold=best_th))
             auc_print = metrics_list[-1]["AUC"]

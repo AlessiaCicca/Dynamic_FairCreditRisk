@@ -13,7 +13,7 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 SEED = 42
 
 # Fairness penalty coefficients 
-BETA  = 0   # M_STATIC  EO penalty weight
+BETA  = 0.3   # M_STATIC  EO penalty weight
 ALPHA = 0.3 # M_DYNAMIC EO penalty weight
 
 # EO penalty mode
@@ -114,8 +114,8 @@ RACE_MINORITY = {
 
 # Grid search
 GRID_BETAS  = [0.0, 0.3, 0.5, 0.7, 1.0]
-#GRID_ALPHAS = [0.0, 0.3, 0.5, 0.7, 0.9, 1.0]
-GRID_ALPHAS=[0.01, 0.05, 0.1, 0.15, 0.20, 0.25, 0.30, 0.5, 0.8]
+GRID_ALPHAS = [0.0, 0.01, 0.3]
+#GRID_ALPHAS=[0.01, 0.05, 0.1, 0.15, 0.20, 0.25, 0.30, 0.5, 0.8]
 
 # W&B
 USE_WANDB    = False

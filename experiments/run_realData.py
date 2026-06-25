@@ -60,7 +60,7 @@ torch.cuda.manual_seed(SEED)
 torch.backends.cudnn.deterministic = True
 
 # From hazard per_bin to PD(L, L+horizon)
-def collapse_to_pdH(oof_hazard, event_bin, ids, lmk_vals, n_bins,
+def collapse_to_pdh(oof_hazard, event_bin, ids, lmk_vals, n_bins,
                      complete_only=True):
     # Numerical stability
     h = np.clip(oof_hazard, 1e-7, 1 - 1e-7)

@@ -62,9 +62,54 @@ torch.manual_seed(SEED)
 torch.cuda.manual_seed(SEED)
 torch.backends.cudnn.deterministic = True
 
+def run_feature_importance(static_data, dynamic_data,
+                            res_static, res_dynamic, out_dir):
+    import matplotlib.pyplot as plt
+
+    print("\n" + "="*60)
+    print("FEATURE IMPORTANCE")
+    print("="*60)
+
+    for name, data, res in [
+        ("M_STATIC",  static_data,  res_static),
+        ("M_DYNAMIC", dynamic_data, res_dynamic),
+    ]:
+        model  = res["model_last"]
+        scaler = res["scaler_last"]
+        X      = data["X"]
+        y      = data["y"]
+        feature_names = data["feature_names"]
+
+        X_s = scaler.transform(X).astype(np.float32)
+        X_s = np.nan_to_num(X_s, nan=0., posinf=5., neginf=-5.)
+
+        model.eval()
+        with torch.no_grad():
+            base = torch.sigmoid(
+                model(torch.tensor(X_s, device=DEVICE))
+            ).cpu().numpy()
+        base_auc = roc_auc_score(y, base)
+
+        importances = []
+        for i in range(X_s.shape[1]):
+            Xp = X_s.copy()
+            np.random.shuffle(Xp[:, i])
+            with torch.no_grad():
+                pp = torch.sigmoid(
+                    model(torch.tensor(Xp, device=DEVICE))
+                ).cpu().numpy()
+            importances.append(base_auc - roc_auc_score(y, pp))
+
+        df_imp = pd.DataFrame({
+            "feature": feature_names, "importance": importances,
+        }).sort_values("importance", ascending=False)
+
+        print(f"\n--- {name} (baseline AUC={base_auc:.4f}) ---")
+        print(df_imp.head(20).to_string(index=False))
+        df_imp.to_csv(out_dir / f"feature_importance_{name.lower()}.csv", index=False)
 
 # From hazard per_bin to PD(L, L+horizon)
-def collapse_to_pdH(oof_hazard, event_bin, ids, lmk_vals, n_bins,
+def collapse_to_pdh(oof_hazard, event_bin, ids, lmk_vals, n_bins,
                      complete_only=True):
     # Numerical stability
     h = np.clip(oof_hazard, 1e-7, 1 - 1e-7)
@@ -306,7 +351,7 @@ def main():
     print("\nBuilding DYNAMIC dataset...")
     dynamic_data = build_dynamic(
         df=df,
-        static_cols=STATIC_COLS_SIM, tvc_cols=TVC_COLS_SIM,
+        static_cols=STATIC_COLS_SIM, tvc_cols=TVC_COLS_SIM + trend_cols,
         cat_cols=CAT_COLS_SIM, landmarks=cfg["landmarks"],
         horizon=cfg["horizon"], delta=cfg.get("delta", 1),
         id_col=ID_COL, time_col=TIME_COL,
@@ -367,12 +412,18 @@ def main():
     id2g = id2g[~id2g.index.duplicated(keep="first")]
     dyn_sens_collapsed = pd.Series(dyn_ids).map(id2g).to_numpy()
 
-    # Summary
 
+
+    # Summary
     summary = build_summary_table({
         "M_STATIC":  res_static,
         "M_DYNAMIC": res_dynamic,
     })
+    
+    run_feature_importance(
+        static_data, dynamic_data,
+        res_static, res_dynamic, out_dir,
+    )
 
   
     print("\n=== CV RESULTS ===")
@@ -403,7 +454,7 @@ def main():
         y_static=static_data["y"],
         static_oof=res_static["oof_preds"],
         sens_static=static_data["sensitive"],
-        y_dynamic=dyn_y12,
+        y_dynamic=dyn_yh,
         dynamic_oof=dyn_pd,
         sens_dynamic=dyn_sens_collapsed,
         lmk_vals=dyn_L,

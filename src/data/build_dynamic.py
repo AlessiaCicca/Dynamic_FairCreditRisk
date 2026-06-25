@@ -27,6 +27,32 @@ def build_dynamic(
     enc_cat=None,
 ):
 
+    # ---- Trend a `delta` sul panel completo, PRIMA dello snapshot ----
+    # shift(delta) -> variazione nell'intervallo inter-landmark.
+    # Calcolato qui perche' serve la storia longitudinale, persa dopo lo snapshot.
+    trend_cols = []
+    trend_base_cols=[ "current_upb", "current_interest_rate", "estimated_ltv", "bd_pct",]
+
+    if trend_base_cols:
+        for col in trend_base_cols:
+            if col not in df.columns:
+                continue
+            tname = f"{col}_trend{delta}"
+            s = df.groupby(id_col)[col].transform(lambda x: x - x.shift(delta))
+            # clip per-colonna su quantili (NON un fisso ±2: current_upb ha scala grande)
+            lo, hi = s.quantile(0.01), s.quantile(0.99)
+            df[tname] = s.clip(lo, hi).fillna(0.0)
+            trend_cols.append(tname)
+    if "current_interest_rate" in df.columns and "interest_rate" in df.columns:
+     df["rate_spread"] = df["current_interest_rate"] - df["interest_rate"]
+
+    if "estimated_ltv" in df.columns and "original_ltv" in df.columns:
+      df["ltv_change"] = df["estimated_ltv"] - df["original_ltv"]
+
+    agg=["estimated_ltv","ltv_change"]
+    # i trend entrano come TVC (congelati a x(L) nello snapshot)
+    #tvc_cols = list(tvc_cols) + trend_cols + agg
+
     
     # For each landmark L:
     # - keeps only rows at time L (snapshot)
@@ -90,7 +116,24 @@ def build_dynamic(
     enc_lmk.fit(np.array(all_bin_times).reshape(-1, 1))
     lmk_oh            = enc_lmk.transform(landmark_df[["bin_time"]])
     lmk_feature_names = [f"bin_{t}" for t in all_bin_times]
-    
+    from sklearn.preprocessing import SplineTransformer
+
+    n_knots   = 4          # nodi interni: 3-5 ragionevole; piu' nodi = piu' flessibile
+    spline_deg = 3         # cubiche
+
+    spline_tf = SplineTransformer(
+        n_knots=n_knots, degree=spline_deg,
+        include_bias=False,          # evita collinearita' con l'intercetta del modello
+        knots="quantile",            # nodi sui quantili di bin_time -> piu' risoluzione dove ci sono dati
+    )
+    # fit sul range completo dei bin_time osservati
+    spline_tf.fit(np.asarray(all_bin_times, dtype=np.float64).reshape(-1, 1))
+
+    lmk_spl = spline_tf.transform(
+        landmark_df[["bin_time"]].to_numpy(dtype=np.float64)
+    ).astype(np.float32)
+    lmk_feature_names = [f"spl_{i}" for i in range(lmk_spl.shape[1])]
+
     all_num_cols = static_cols + tvc_cols
 
     # Replaces missing values with the column median 
@@ -99,9 +142,9 @@ def build_dynamic(
         landmark_df[static_cols].fillna(medians[static_cols]).to_numpy(dtype=np.float32),
         landmark_df[tvc_cols].fillna(medians[tvc_cols]).to_numpy(dtype=np.float32),
     ])
-
+    
     # Builds the final feature matrix by concatenating all parts
-    X = np.hstack([num, cats, lmk_oh])
+    X = np.hstack([num, cats, lmk_spl])
 
     # Extracts vectors needed for training
 
