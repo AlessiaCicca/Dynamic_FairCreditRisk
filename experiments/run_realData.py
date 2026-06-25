@@ -224,15 +224,17 @@ def run_fairness_analysis(
             print_fairness_report(mname, res, group_names, label="AGGREGATE")
             agg_rows.append(res_to_row(res, group_names,
                                        {"attr": attr_name, "model": mname}))
-
+        MIN_GROUP = 50 
         # Dynamic per landmark
         for L in cfg["landmarks"]:
             mask = lmk_vals == L
-            if mask.sum() < 100: continue
             yt_f, yp_f, sn_f = filter_sensitive(
                 y_dynamic[mask], dynamic_oof[mask], s_dyn[mask]
             )
             if len(np.unique(yt_f)) < 2 or len(np.unique(sn_f)) < 2: continue
+            counts = np.array([(sn_f == g).sum() for g in np.unique(sn_f)])
+            n_group_min = int(counts.min())
+            if n_group_min < MIN_GROUP: continue
             yb_f = (yp_f >= th_dynamic).astype(int)
             res  = fairness_metrics(yt_f, yp_f, yb_f, sn_f,
                                     group_names, threshold=th_dynamic)
@@ -261,7 +263,7 @@ def run_fairness_analysis(
     df_auc = auc_fairness_all_models(
         df_dynamic=df_dyn_lmk, df_static_agg=df_agg,
         time_col_dyn="landmark",
-        min_samples_per_group=100,
+        min_samples_per_group=50,
     )
     df_auc.to_csv(out_dir / "auc_fairness_comparison.csv", index=False)
     print("\n=== AUC FAIRNESS ===")

@@ -51,7 +51,7 @@ def build_dynamic(
 
     agg=["estimated_ltv","ltv_change"]
     # i trend entrano come TVC (congelati a x(L) nello snapshot)
-    #tvc_cols = list(tvc_cols) + trend_cols + agg
+    tvc_cols = list(tvc_cols) + trend_cols + agg
 
     
     # For each landmark L:

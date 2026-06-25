@@ -139,15 +139,15 @@ def _run_cv(
             time_rows = []
             for t in sorted(np.unique(eval_time)):
                 mask = eval_time == t
-                sn_m = eval_sens[mask] 
-                counts = pd.Series(sn_m).value_counts()
-                if counts.min() < 50:
-                    continue
                 yt_f, yp_f, sn_f = filter_sensitive(
                     eval_y[mask], eval_preds[mask], eval_sens[mask]
                 )
                 if len(np.unique(yt_f)) < 2 or len(np.unique(sn_f)) < 2:
                     continue
+                counts = pd.Series(sn_f).value_counts()
+                if counts.min() < 50:
+                    continue
+                
                 yb_f = (yp_f >= eval_th).astype(int)
                 res  = fairness_metrics(yt_f, yp_f, yb_f, sn_f,
                                         group_names, threshold=eval_th)
