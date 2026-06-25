@@ -33,7 +33,7 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 from config import (
     SEED, DEVICE,
     ALPHA, BETA,
-    EO_MODE_D,
+    EO_MODE_D, DELTA_SIM,
     SCHEDULE_MODE_D,
     HORIZON, LANDMARKS_SIM, N_TEST_LANDMARKS,
     ID_COL, TIME_COL, EVENT_COL, SENS_COL,
@@ -111,7 +111,7 @@ def parse_args():
 def load_config(config_path, args):
     cfg = dict(
         alpha=ALPHA, beta=BETA,
-        eo_mode_d=EO_MODE_D,
+        eo_mode_d=EO_MODE_D, delta=DELTA_SIM,
         schedule_mode_d=SCHEDULE_MODE_D,
         horizon=HORIZON, landmarks=LANDMARKS_SIM,
         n_folds=N_FOLDS, use_wandb=USE_WANDB,
