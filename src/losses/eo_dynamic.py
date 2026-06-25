@@ -118,9 +118,9 @@ def equalized_odds_loss_dynamic(
         time_use[group_idx] = time_vals.float()
         already_prob = True                                
     else:
-      pred_use, sens_use, true_use, time_use = (
-            label_pred, sensitive, label_true, time_vals)
-        already_prob = False
+         pred_use, sens_use, true_use, time_use = (
+                label_pred, sensitive, label_true, time_vals)
+         already_prob = False
 
     gaps = _per_landmark_gaps(
       pred_use, sens_use, true_use, time_use, already_prob,
