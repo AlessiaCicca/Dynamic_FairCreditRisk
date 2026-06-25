@@ -106,7 +106,7 @@ def parse_args():
 def load_config(config_path):
     cfg = dict(
         alpha=ALPHA, beta=BETA, 
-        eo_mode_d=EO_MODE_D, 
+        eo_mode_d=EO_MODE_D, delta=DELTA,
         schedule_mode_d=SCHEDULE_MODE_D, 
         horizon=HORIZON_MONTHS, landmarks=LANDMARKS,
         n_folds=N_FOLDS, use_wandb=USE_WANDB,
