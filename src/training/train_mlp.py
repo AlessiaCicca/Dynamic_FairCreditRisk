@@ -116,27 +116,12 @@ def train_mlp(
                 mode=eo_mode_d, current_epoch=epoch,
                 time_schedule_mode=schedule_mode_d,group_idx=group_idx)
             loss = (1 - alpha) * L_bce + alpha * L_eo
-            #L_eo_normalized = L_eo / (L_bce.detach() + 1e-8)
-            #loss = (1 - alpha) * L_bce + alpha * L_eo_normalized
 
         else:
             loss = L_bce
 
         if not torch.isfinite(loss):
             break
-        '''   
-        if epoch % 20 == 0 and apply_eo:
-              optimizer.zero_grad()
-              L_bce.backward(retain_graph=True)
-              grad_bce = sum(p.grad.norm().item() for p in model.parameters() if p.grad is not None)
-
-              optimizer.zero_grad()
-              L_eo.backward(retain_graph=True)
-              grad_eo = sum(p.grad.norm().item() for p in model.parameters() if p.grad is not None)
-
-              print(f"  grad_norm BCE={grad_bce:.6f}  |  grad_norm EO={grad_eo:.6f}  |  ratio={grad_bce/(grad_eo+1e-8):.1f}x")
-              optimizer.zero_grad()  # pulisci prima del backward reale
-        '''
 
         # Backpropagation 
         loss.backward()
