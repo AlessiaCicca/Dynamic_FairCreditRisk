@@ -28,31 +28,23 @@ def build_dynamic(
 ):
 
     # ---- Trend a `delta` sul panel completo, PRIMA dello snapshot ----
-    # shift(delta) -> variazione nell'intervallo inter-landmark.
-    # Calcolato qui perche' serve la storia longitudinale, persa dopo lo snapshot.
+    # Il modello landmark congela x(L): reintroduciamo la dinamica pre-landmark
+    # come Δx = x(L) - x(L-delta). Calcolato qui perche' richiede la storia
+    # longitudinale, persa dopo lo snapshot. Congelato a x(L) => nessun leakage.
+    trend_base_cols = ["bd_pct", "current_upb", "estimated_ltv", "current_interest_rate"]
     trend_cols = []
-    trend_base_cols=[ "current_upb", "current_interest_rate", "estimated_ltv", "bd_pct",]
+    for col in trend_base_cols:
+        if col not in df.columns:
+            continue
+        tname = f"{col}_trend{delta}"
+        s = df.groupby(id_col)[col].transform(lambda x: x - x.shift(delta))
+        # clip per-colonna su quantili (NON un fisso ±2: current_upb ha scala grande)
+        lo, hi = s.quantile(0.01), s.quantile(0.99)
+        df[tname] = s.clip(lo, hi).fillna(0.0)
+        trend_cols.append(tname)
 
-    if trend_base_cols:
-        for col in trend_base_cols:
-            if col not in df.columns:
-                continue
-            tname = f"{col}_trend{delta}"
-            s = df.groupby(id_col)[col].transform(lambda x: x - x.shift(delta))
-            # clip per-colonna su quantili (NON un fisso ±2: current_upb ha scala grande)
-            lo, hi = s.quantile(0.01), s.quantile(0.99)
-            df[tname] = s.clip(lo, hi).fillna(0.0)
-            trend_cols.append(tname)
-    if "current_interest_rate" in df.columns and "interest_rate" in df.columns:
-     df["rate_spread"] = df["current_interest_rate"] - df["interest_rate"]
-
-    if "estimated_ltv" in df.columns and "original_ltv" in df.columns:
-      df["ltv_change"] = df["estimated_ltv"] - df["original_ltv"]
-
-    agg=["estimated_ltv","ltv_change"]
-    # i trend entrano come TVC (congelati a x(L) nello snapshot)
-    tvc_cols = list(tvc_cols) + trend_cols + agg
-
+    # i trend entrano come TVC: congelati a x(L) nello snapshot
+    tvc_cols = list(tvc_cols) + trend_cols
     
     # For each landmark L:
     # - keeps only rows at time L (snapshot)
@@ -102,7 +94,6 @@ def build_dynamic(
     landmark_df = pd.concat(lm_rows, ignore_index=True)
     del lm_rows
 
-
     # Categorical encoding
     if enc_cat is None:
         enc_cat = OneHotEncoder(handle_unknown="ignore", sparse_output=False, dtype=np.float32)
@@ -118,7 +109,7 @@ def build_dynamic(
     lmk_feature_names = [f"bin_{t}" for t in all_bin_times]
     from sklearn.preprocessing import SplineTransformer
 
-    n_knots   = 4          # nodi interni: 3-5 ragionevole; piu' nodi = piu' flessibile
+    n_knots   = 4         # nodi interni: 3-5 ragionevole; piu' nodi = piu' flessibile
     spline_deg = 3         # cubiche
 
     spline_tf = SplineTransformer(
@@ -143,6 +134,7 @@ def build_dynamic(
         landmark_df[tvc_cols].fillna(medians[tvc_cols]).to_numpy(dtype=np.float32),
     ])
     
+
     # Builds the final feature matrix by concatenating all parts
     X = np.hstack([num, cats, lmk_spl])
 
