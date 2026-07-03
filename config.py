@@ -10,7 +10,7 @@ import torch
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Reproducibility 42 | 123 | 456 | 789 | 1234 | 2024 | 314 | 99 | 7 | 2025
-SEED = 42
+SEED = 123
 
 # Fairness penalty coefficients 
 BETA  = 0   # M_STATIC  EO penalty weight
@@ -113,9 +113,9 @@ RACE_MINORITY = {
 }
 
 # Grid search
-GRID_BETAS  = [0.0, 0.3, 0.5, 0.7, 1.0]
-GRID_ALPHAS = [0.0, 0.01, 0.3]
-#GRID_ALPHAS=[0.01, 0.05, 0.1, 0.15, 0.20, 0.25, 0.30, 0.5, 0.8]
+#GRID_BETAS  = [0.0, 0.3, 0.5, 0.7, 1.0]
+GRID_BETAS = [0.0, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.00]
+GRID_ALPHAS = [0.0, 0.01, 0.03, 0.05, 0.08, 0.10, 0.15, 0.20, 0.30]
 
 # W&B
 USE_WANDB    = False

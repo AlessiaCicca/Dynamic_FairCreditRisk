@@ -1,18 +1,2 @@
-EDA del file clean
-Migliorare feature engineering e model
-Controlla questione validation set
-valuta se mantenere o togliere le trend columns
-Controlla sampling che usa derived_sex invece di applicant_sex
-DECAY FUNZIONA SU SEX 
-
-
-
 AGGIUNGI PLOT PROBABILITY DI DEFAULT O SURVIVAL
 
-
-VERIFICA PERCH' NON C'è LOAN AMOUNT O CURRENTUBP
-
-sep_fix=nan nella grid (il trapz_norm < 3 / decisione soglia-fissa) — mai affrontato, lo sai.
-Il selettore "BEST" che premia l'overshoot — cosmesi, leggi il ginocchio a mano.
-L'artefatto FAIR da complete_only sotto censoring asimmetrico — da dichiarare in tesi, non da correggere.
-La quota di censoring da quantificare — diagnostica descrittiva mancante.
