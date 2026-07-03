@@ -51,7 +51,7 @@ NUMERIC_COLS = [
     "credit_score", "original_dti", "original_ltv",
      "interest_rate", "loan_term",
     "num_borrowers",
-    "current_upb", "current_interest_rate", "estimated_ltv",
+    "current_upb", "current_interest_rate", "estimated_ltv", "loan_amount"
 ]
 
 
@@ -62,7 +62,7 @@ MISSING_CODES = {
      "num_borrowers": [99],
      "estimated_ltv":[999,998],
      "occupancy_status_orig": [9],
-      "loan_purpose_orig": [9],
+     "loan_purpose_orig": [9],
 
 }
 
@@ -279,7 +279,7 @@ def encode_demographics(df):
 
     # Age
     df["age_bin"] = df["applicant_age"].map(
-        {"<25": 1, "25-34": 1, "35-44": 0, "45-54": 0,
+        {"<25": 1, "25-34": 0, "35-44": 0, "45-54": 0,
          "55-64": 0, "65-74": 0, ">74": 0}
     )
 
@@ -319,13 +319,14 @@ def preprocess(path_in, path_out):
     df = convert_numerics(df)
     df = cap_outliers(df)
     df = compute_bd_pct(df)
+    df = compute_upb_delta(df)
     df = compute_trends(df)
     df = compute_first_default_age(df)
     df = encode_demographics(df)
     df = propagate_demographics(df)
     df = encode_categoricals(df)
 
-    df.drop(columns=["loan_amount"], inplace=True)  
+    #df.drop(columns=["loan_amount"], inplace=True)  
 
 
     print(f"\nSaving: {path_out}")

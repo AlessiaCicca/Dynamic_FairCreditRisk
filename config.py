@@ -70,10 +70,10 @@ DELTA=4
 
 STATIC_COLS = [
     "credit_score", "original_dti", "original_ltv", 
-    "interest_rate", "loan_term", "num_borrowers", 
+    "interest_rate", "loan_term", "num_borrowers", "loan_amount"
 ]
 TVC_COLS = [
-    "current_upb", "current_interest_rate", "estimated_ltv", "bd_pct",
+    "current_upb", "current_interest_rate", "estimated_ltv", "bd_pct","current_upb_delta"
 ]
 CAT_COLS = ["occupancy_status_orig", "loan_purpose_orig", ]
 '''
