@@ -214,18 +214,10 @@ def compute_trends(df):
         ).clip(-2, 2).fillna(0)
     return df
 
-
-# VALUTA SE SERVE
+# First-order difference of current_upb.
+# Captures short-term changes in repayment behavior.
+# Reference: KAN paper (2024), ResE-BiLSTM (2025)
 def compute_upb_delta(df):
-    """
-    First-order difference of current_upb.
-    Captures short-term changes in repayment behavior.
-    Negative → principal repayment (normal)
-    Zero     → missed payment (risk signal)
-    Positive → loan restructuring or deferred capitalization (high risk)
-    
-    Reference: KAN paper (2024), ResE-BiLSTM (2025)
-    """
     df = df.sort_values(["loan_sequence_number", "loan_age"])
     df["current_upb_delta"] = df.groupby("loan_sequence_number")["current_upb"].diff().fillna(0)
     return df
@@ -253,13 +245,6 @@ def compute_first_default_age(df):
 
 # Demographics → binary
 def encode_demographics(df):
-    '''
-      # Sex
-      if "derived_sex" in df.columns:
-          df["sex_bin"] = df["derived_sex"].str.lower().str.strip().map(
-              {"male": 0, "female": 1}
-          )
-    '''
     if "applicant_sex" in df.columns:
         df["sex_bin"] = pd.to_numeric(df["applicant_sex"], errors="coerce").map(
             {1.0: 0, 2.0: 1}  # 1=Male→0, 2=Female→1, 3/6→NaN
@@ -326,7 +311,6 @@ def preprocess(path_in, path_out):
     df = propagate_demographics(df)
     df = encode_categoricals(df)
 
-    #df.drop(columns=["loan_amount"], inplace=True)  
 
 
     print(f"\nSaving: {path_out}")
