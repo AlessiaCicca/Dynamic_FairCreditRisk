@@ -10,7 +10,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import warnings
 from pathlib import Path
-from sklearn.model_selection import GroupKFold
+from sklearn.model_selection import GroupKFold, GroupShuffleSplit
 from sklearn.metrics import roc_auc_score
 from matplotlib.lines import Line2D
 
@@ -20,6 +20,8 @@ from src.training.train_mlp import train_mlp
 from src.evaluation.fairness_metrics import (
     fairness_metrics, filter_sensitive)
 from src.training.cross_validation import find_best_threshold
+
+from config import SEED
 
 warnings.filterwarnings("ignore")
 
@@ -49,10 +51,70 @@ def _collapse_fold(hazard, event_bin, ids, lmk, n_bins, complete_only=True):
     if complete_only:
         out = out[out["n"] == n_bins]
     return out
-    
 
 
-# MAIN RUN to which we will assign all the different value for the coefficients
+
+def _eval_static(preds_m, y_m, sens_m, group_names, eval_th):
+    yt_f, yp_f, sn_f = filter_sensitive(y_m.astype(int), preds_m, sens_m)
+    if len(np.unique(yt_f)) < 2 or len(np.unique(sn_f)) < 2:
+        auc = np.nan
+    else:
+        auc = roc_auc_score(yt_f, yp_f) if len(np.unique(yt_f)) > 1 else np.nan
+    yb_f = (yp_f >= eval_th).astype(int)
+    res  = fairness_metrics(yt_f, yp_f, yb_f, sn_f, group_names, threshold=eval_th)
+    s = res.get("axioms", {}).get("separation", np.nan)
+    return auc, s, s
+
+#  hazard per-bin -> PD-H 
+def _eval_dynamic(preds_m, y_m, ids_m, time_m, sens_m, group_names, eval_th, n_bins):
+    coll = _collapse_fold(preds_m, y_m, ids_m, time_m, n_bins)
+    coll = coll.reset_index(drop=True)
+
+    sens_by_id = pd.Series(sens_m, index=ids_m)
+    sens_by_id = sens_by_id[~sens_by_id.index.duplicated(keep="first")]
+    coll["sens"] = coll["id"].map(sens_by_id)
+
+    eval_preds = coll["pdh"].to_numpy()
+    eval_y     = coll["yh"].to_numpy().astype(int)
+    eval_sens  = coll["sens"].to_numpy()
+    eval_time  = coll["L"].to_numpy()
+
+    if len(np.unique(eval_y)) > 1:
+        auc = roc_auc_score(eval_y, eval_preds)
+    else:
+        auc = np.nan
+
+    time_rows = []
+    for t in sorted(np.unique(eval_time)):
+        mask = eval_time == t
+        yt_f, yp_f, sn_f = filter_sensitive(
+            eval_y[mask], eval_preds[mask], eval_sens[mask]
+        )
+        if len(np.unique(yt_f)) < 2 or len(np.unique(sn_f)) < 2:
+            continue
+        counts = pd.Series(sn_f).value_counts()
+        if counts.min() < 50:
+            continue
+        yb_f = (yp_f >= eval_th).astype(int)
+        res  = fairness_metrics(yt_f, yp_f, yb_f, sn_f, group_names, threshold=eval_th)
+        time_rows.append({"t": t, "separation": res.get("axioms", {}).get("separation", np.nan)})
+
+    df_t = pd.DataFrame(time_rows)
+
+    def trapz_norm(col):
+        sub = df_t.dropna(subset=[col])
+        if len(sub) < 3:
+            return np.nan
+        t_v = sub["t"].values.astype(float)
+        v   = sub[col].values.astype(float)
+        t_n = (t_v - t_v.min()) / (t_v.max() - t_v.min() + 1e-9)
+        return float(np.trapezoid(v, t_n))
+
+    sep_auc  = trapz_norm("separation")
+    sep_mean = df_t["separation"].mean() if not df_t.empty else np.nan
+    return auc, sep_auc, sep_mean
+
+#MAIN RUN to which we will assign all the different value for the coefficients
 def _run_cv(
     model_tag,
     X, y, grp, sens, time_arr,
@@ -61,19 +123,27 @@ def _run_cv(
     n_folds=5,
     eo_mode_d="mean",
     schedule_mode_d="flat",
-    fixed_th=None,          
-    n_bins=None):            
+    fixed_th=None,
+    n_bins=None,
+    val_size=0.5,
+    split_seed=SEED):
 
     # Splits the data into 5 folds ensuring that the same loan is not both in train and test
-    gkf       = GroupKFold(n_splits=n_folds)
-    # Empty Array to save OOF predictions
-    oof_preds = np.zeros(len(y), dtype=np.float64)
+    gkf = GroupKFold(n_splits=n_folds)
+    # Empty Array to save OOF predictions val and test
+    oof_val   = np.zeros(len(y), dtype=np.float64)
+    oof_test  = np.zeros(len(y), dtype=np.float64)
+    is_val    = np.zeros(len(y), dtype=bool)
+    is_test   = np.zeros(len(y), dtype=bool)
 
     thresholds = []
-    fold_aucs = []   
-
     # For each fold: train the model on the train, predict on the test
     for tr_idx, te_idx in gkf.split(X, y, grp):
+        gss = GroupShuffleSplit(n_splits=1, test_size=val_size, random_state=split_seed)
+        a_pos, b_pos = next(gss.split(te_idx, groups=grp[te_idx]))
+        val_idx  = te_idx[a_pos]
+        test_idx = te_idx[b_pos]
+
         time_tr = time_arr[tr_idx] if time_arr is not None else None
         p_te, p_tr, _, _ = train_mlp(
             X[tr_idx], y[tr_idx], X[te_idx], y[te_idx],
@@ -86,118 +156,52 @@ def _run_cv(
             schedule_mode_d = schedule_mode_d,
             verbose         = False,
         )
-        oof_preds[te_idx] = p_te
+
+
+        oof_val[val_idx]   = p_te[a_pos]
+        oof_test[test_idx] = p_te[b_pos]
+        is_val[val_idx]    = True
+        is_test[test_idx]  = True
+
         # Find the threshold that maximize F1
         if time_arr is not None:
-            tr_pdh = _collapse_fold(p_tr, y[tr_idx], grp[tr_idx], time_arr[tr_idx], n_bins)
-            te_pdh = _collapse_fold(p_te, y[te_idx], grp[te_idx], time_arr[te_idx], n_bins)
+            tr_pdh  = _collapse_fold(p_tr, y[tr_idx], grp[tr_idx], time_arr[tr_idx], n_bins)
             best_th = find_best_threshold(tr_pdh["yh"], tr_pdh["pdh"])
-            if len(np.unique(te_pdh["yh"])) > 1:
-                fold_aucs.append(roc_auc_score(te_pdh["yh"].astype(int), te_pdh["pdh"]))
         else:
             best_th = find_best_threshold(y[tr_idx], p_tr)
-            if len(np.unique(y[te_idx])) > 1:
-                fold_aucs.append(roc_auc_score(y[te_idx].astype(int), p_te))
         thresholds.append(best_th)
 
     th = float(np.mean(thresholds))
 
-    #  hazard per-bin -> PD-H 
     if time_arr is not None:
-        if n_bins is None:
-            raise ValueError("n_bins required")
-        h = np.clip(oof_preds, 1e-7, 1 - 1e-7)
-        dfp = pd.DataFrame({
-            "id": grp, "L": time_arr,
-            "log1mh": np.log1p(-h),
-            "ev": y,
-            "sens": sens,
-        })
-        g    = dfp.groupby(["id", "L"], sort=False)
-        surv = np.exp(g["log1mh"].sum())
-        pdh  = (1.0 - surv).rename("pdh")
-        yh   = g["ev"].max().rename("yh")
-        sh   = g["sens"].first().rename("sh") 
-        cnt  = g.size().rename("n")
-        Lh   = g["L"].first().rename("Lh")
-        coll = pd.concat([pdh, yh, sh, cnt, Lh], axis=1).reset_index(drop=True)
-        coll = coll[coll["n"] == n_bins]       
-        
-        eval_preds = coll["pdh"].to_numpy()
-        eval_y     = coll["yh"].to_numpy().astype(int)
-        eval_sens  = coll["sh"].to_numpy()
-        eval_time  = coll["Lh"].to_numpy()
+        auc_val, sep_auc_val, sep_mean_val = _eval_dynamic(
+            oof_val[is_val], y[is_val], grp[is_val], time_arr[is_val],
+            sens[is_val], group_names, th, n_bins)
     else:
-        eval_preds = oof_preds
-        eval_y     = y.astype(int)
-        eval_sens  = sens
-        eval_time  = None
-
-  
-    def compute_separation(eval_th):
-        if eval_time is not None:
-            time_rows = []
-            for t in sorted(np.unique(eval_time)):
-                mask = eval_time == t
-                yt_f, yp_f, sn_f = filter_sensitive(
-                    eval_y[mask], eval_preds[mask], eval_sens[mask]
-                )
-                if len(np.unique(yt_f)) < 2 or len(np.unique(sn_f)) < 2:
-                    continue
-                counts = pd.Series(sn_f).value_counts()
-                if counts.min() < 50:
-                    continue
-                
-                yb_f = (yp_f >= eval_th).astype(int)
-                res  = fairness_metrics(yt_f, yp_f, yb_f, sn_f,
-                                        group_names, threshold=eval_th)
-                axioms = res.get("axioms", {})
-                time_rows.append({
-                    "t":          t,
-                    "separation": axioms.get("separation", np.nan),
-                })
-
-            df_t = pd.DataFrame(time_rows)
-
-            def trapz_norm(col):
-                sub = df_t.dropna(subset=[col])
-                if len(sub) < 3:
-                    return np.nan
-                t_v = sub["t"].values.astype(float)
-                v   = sub[col].values.astype(float)
-                t_n = (t_v - t_v.min()) / (t_v.max() - t_v.min() + 1e-9)
-                return float(np.trapezoid(v, t_n))
-
-            sep_auc  = trapz_norm("separation")
-            sep_mean = df_t["separation"].mean() if not df_t.empty else np.nan
-            return sep_auc, sep_mean
-        else:
-            yt_f, yp_f, sn_f = filter_sensitive(
-                eval_y, eval_preds, eval_sens
-            )
-            yb_f   = (yp_f >= eval_th).astype(int)
-            res    = fairness_metrics(yt_f, yp_f, yb_f, sn_f,
-                                      group_names, threshold=eval_th)
-            axioms = res.get("axioms", {})
-            s = axioms.get("separation", np.nan)
-            return s, s
-
-    sep_auc, sep_mean = compute_separation(th)
+        auc_val, sep_auc_val, sep_mean_val = _eval_static(
+            oof_val[is_val], y[is_val], sens[is_val], group_names, th)
 
     if fixed_th is not None:
-        sep_auc_fixed, sep_mean_fixed = compute_separation(float(fixed_th))
+        eval_th_fixed = float(fixed_th)
+        if time_arr is not None:
+            _, sep_auc_val_fixed, sep_mean_val_fixed = _eval_dynamic(
+                oof_val[is_val], y[is_val], grp[is_val], time_arr[is_val],
+                sens[is_val], group_names, eval_th_fixed, n_bins)
+        else:
+            _, sep_auc_val_fixed, sep_mean_val_fixed = _eval_static(
+                oof_val[is_val], y[is_val], sens[is_val], group_names, eval_th_fixed)
     else:
-        sep_auc_fixed, sep_mean_fixed = np.nan, np.nan
+        sep_auc_val_fixed, sep_mean_val_fixed = np.nan, np.nan
 
     return {
-        "auc_mean":              float(np.nanmean(fold_aucs)) if fold_aucs else np.nan,
-        "separation_auc":        sep_auc,
-        "separation_mean":       sep_mean,
-        "separation_auc_fixed":  sep_auc_fixed,
-        "separation_mean_fixed": sep_mean_fixed,
-        "threshold":             float(th),
+        "auc_mean":              auc_val,
+        "separation_auc":        sep_auc_val,
+        "separation_mean":       sep_mean_val,
+        "separation_auc_fixed":  sep_auc_val_fixed,
+        "separation_mean_fixed": sep_mean_val_fixed,
+        "threshold":             th,
         "fixed_threshold":       float(fixed_th) if fixed_th is not None else np.nan,
-    }
+          }
 
 
 # Main grid search run
@@ -210,15 +214,15 @@ def run_grid_search(
     n_folds=5,
     eo_mode_d="mean",
     schedule_mode_d="flat",
-    n_bins=None,               
+    n_bins=None,
     out_dir=Path("outputs"),
     run_tag="run"):
-    
+
     # Seed setup
-    np.random.seed(42)
-    torch.manual_seed(42)
+    np.random.seed(SEED)
+    torch.manual_seed(SEED)
     if torch.cuda.is_available():
-        torch.cuda.manual_seed(42)
+        torch.cuda.manual_seed(SEED)
 
     if betas  is None: betas  = DEFAULT_BETAS
     if alphas is None: alphas = DEFAULT_ALPHAS
@@ -229,7 +233,7 @@ def run_grid_search(
     print("=" * 60)
     print("GRID SEARCH — M_STATIC")
     print("=" * 60)
-    static_base_th = None     
+    static_base_th = None
     for beta in betas:
         print(f"  beta={beta:.2f} ...", end=" ", flush=True)
         r = _run_cv(
@@ -246,14 +250,13 @@ def run_grid_search(
             r["fixed_threshold"]       = static_base_th
         records.append({"model": "M_STATIC", "coef": beta,
                          "coef_name": "beta", **r})
-        print(f"AUC={r['auc_mean']:.4f}  sep={r['separation_auc']:.4f}  "
-              f"sep_fix={r['separation_auc_fixed']:.4f}")
+        print(f"AUC(val)={r['auc_mean']:.4f}  sep(val)={r['separation_auc']:.4f}")
 
     # M_DYNAMIC
     print("\n" + "=" * 60)
     print("GRID SEARCH — M_DYNAMIC")
     print("=" * 60)
-    dyn_base_th = None    
+    dyn_base_th = None
     for alpha in alphas:
         print(f"  alpha={alpha:.2f} ...", end=" ", flush=True)
         r = _run_cv(
@@ -272,8 +275,7 @@ def run_grid_search(
             r["fixed_threshold"]       = dyn_base_th
         records.append({"model": "M_DYNAMIC", "coef": alpha,
                          "coef_name": "alpha", **r})
-        print(f"AUC={r['auc_mean']:.4f}  sep={r['separation_auc']:.4f}  "
-              f"sep_fix={r['separation_auc_fixed']:.4f}")
+        print(f"AUC(val)={r['auc_mean']:.4f}  sep(val)={r['separation_auc']:.4f}")
 
     df_grid = pd.DataFrame(records)
     csv_path = out_dir / f"grid_tradeoff_{run_tag}.csv"
@@ -285,7 +287,7 @@ def run_grid_search(
     return df_grid
 
 
-# Compute best trade-off point for each model
+# Main grid search run
 def _compute_best(df_grid):
     """
     M_STATIC:  minimizes separation using normalized AUC vs sep trade-off score
@@ -322,7 +324,7 @@ def _compute_best(df_grid):
                 .reset_index(drop=True)
     feasible_d = sub_d[sub_d["auc_mean"] >= static_auc]
     if feasible_d.empty:
-        feasible_d = sub_d  # fallback
+        feasible_d = sub_d  
     best_per_model["M_DYNAMIC"] = feasible_d.loc[
         feasible_d["separation_auc"].idxmin()
     ]
@@ -333,26 +335,26 @@ def _compute_best(df_grid):
 def print_best_points(df_grid, out_dir):
     best_per_model, _ = _compute_best(df_grid)
 
-    print("\n=== BEST COEFFICIENT ===")
+    print("\n=== BEST COEFFICIENT (scelto su VAL, riportato anche il TEST) ===")
     summary_rows = []
     for model_name, best in best_per_model.items():
         summary_rows.append({
-            "model":          model_name,
-            "best_coef":      best["coef"],
-            "coef_name":      best["coef_name"],
-            "auc_mean":       round(best["auc_mean"],       4),
-            "separation_auc": round(best["separation_auc"], 4),
+            "model":              model_name,
+            "best_coef":          best["coef"],
+            "coef_name":          best["coef_name"],
+            "auc_val":            round(best["auc_mean"],            4),
+            "separation_auc_val": round(best["separation_auc"],      4),
+            "auc_test":           round(best.get("auc_mean_test", np.nan), 4),
+            "separation_auc_test":round(best.get("separation_auc_test", np.nan), 4),
         })
         print(f"  {model_name:<12}  {best['coef_name']}={best['coef']:.2f}"
-              f"  AUC={best['auc_mean']:.4f}"
-              f"  sep_auc={best['separation_auc']:.4f}")
+              f"  AUC(val)={best['auc_mean']:.4f}  sep_auc(val)={best['separation_auc']:.4f}")
 
     pd.DataFrame(summary_rows).to_csv(out_dir / "grid_best_points.csv", index=False)
 
 
 def plot_tradeoff(df_grid, out_dir, run_tag="run"):
     best_per_model, trade_score = _compute_best(df_grid)
-
     # Static baseline AUC (beta=0) — used as constraint for dynamic
     static_auc_baseline = df_grid[
         (df_grid["model"] == "M_STATIC") & (df_grid["coef"] == 0.0)
@@ -360,7 +362,7 @@ def plot_tradeoff(df_grid, out_dir, run_tag="run"):
     static_auc_baseline = float(static_auc_baseline[0]) if len(static_auc_baseline) > 0 else 0.0
 
     fig, axes = plt.subplots(1, 2, figsize=(12, 6))
-    fig.suptitle("AUC and Separation AUC as a function of λ\n",
+    fig.suptitle("AUC and Separation AUC (val) as a function of λ\n",
                  fontsize=13, fontweight="bold", y=1.02)
 
     for ax, (model_name, style) in zip(axes, MODEL_STYLES.items()):
@@ -378,7 +380,6 @@ def plot_tradeoff(df_grid, out_dir, run_tag="run"):
         color    = style["color"]
         clabel   = style["coef_label"]
 
-        # Different best_idx criterion for static vs dynamic
         if model_name == "M_DYNAMIC":
             feasible_mask = aucs >= static_auc_baseline
             if feasible_mask.any():
@@ -395,7 +396,6 @@ def plot_tradeoff(df_grid, out_dir, run_tag="run"):
         ax2.plot(coefs, seps, color=color, linewidth=2.2, linestyle="--",
                  marker=style["marker"], markersize=7, alpha=0.55, zorder=3)
 
-        # Draw vertical line at static_auc_baseline for dynamic plot
         if model_name == "M_DYNAMIC":
             ax.axhline(y=static_auc_baseline, color="gray", linestyle=":",
                        linewidth=1.5, alpha=0.7, label=f"Static AUC baseline ({static_auc_baseline:.3f})")
@@ -412,8 +412,8 @@ def plot_tradeoff(df_grid, out_dir, run_tag="run"):
 
         ax.annotate(
             f"best: {clabel}={coefs[best_idx]:.1f}\n"
-            f"AUC={aucs[best_idx]:.3f}\n"
-            f"sep_auc={seps[best_idx]:.4f}",
+            f"AUC(val)={aucs[best_idx]:.3f}\n"
+            f"sep_auc(val)={seps[best_idx]:.4f}",
             xy=(coefs[best_idx], aucs[best_idx]),
             xytext=(12, -28), textcoords="offset points",
             fontsize=8, color=color, fontweight="bold",
@@ -422,8 +422,8 @@ def plot_tradeoff(df_grid, out_dir, run_tag="run"):
         )
 
         ax.set_xlabel(f"λ  ({clabel})", fontsize=11)
-        ax.set_ylabel("AUC  (↑ higher)", fontsize=10, color=color)
-        ax2.set_ylabel("Separation AUC  (↓ fairer)", fontsize=10, color=color)
+        ax.set_ylabel("AUC val  (↑ higher)", fontsize=10, color=color)
+        ax2.set_ylabel("Separation AUC val  (↓ fairer)", fontsize=10, color=color)
         ax.tick_params(axis="y", labelcolor=color)
         ax2.tick_params(axis="y", labelcolor=color)
         ax.set_title(model_name, fontsize=12, fontweight="bold", color=color)
@@ -431,9 +431,9 @@ def plot_tradeoff(df_grid, out_dir, run_tag="run"):
 
         legend_handles = [
             Line2D([0], [0], color=color, linewidth=2,
-                   marker=style["marker"], label="AUC (solid)"),
+                   marker=style["marker"], label="AUC val (solid)"),
             Line2D([0], [0], color=color, linewidth=2, linestyle="--",
-                   marker=style["marker"], alpha=0.55, label="Separation AUC (dashed)"),
+                   marker=style["marker"], alpha=0.55, label="Separation AUC val (dashed)"),
             Line2D([0], [0], marker="*", color="gold", markersize=11,
                    markeredgecolor=color, linewidth=0, label="Best λ* (★)"),
         ]

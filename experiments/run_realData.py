@@ -43,7 +43,7 @@ from config import (
 from src.data.build_static        import build_static
 from src.data.build_dynamic       import build_dynamic
 from src.training.cross_validation import run_cv, build_summary_table, find_best_threshold
-from src.training.grid_search2      import run_grid_search, plot_tradeoff
+from src.training.grid_search      import run_grid_search, plot_tradeoff
 from src.evaluation.fairness_metrics import (
     fairness_metrics, filter_sensitive, res_to_row,
     print_fairness_report, compute_adTPR_adFPR,
