@@ -1,2 +1,8 @@
-AGGIUNGI PLOT PROBABILITY DI DEFAULT O SURVIVAL
+Minori / pulizia
 
+cross_validation.py righe 98 e 101: oof_preds[te] = p_te duplicato (innocuo).
+grid_search2.py print_best_points: stampa/salva colonne auc_mean_test e separation_auc_test che _run_cv non produce mai → sempre NaN, nonostante l'header dica "riportato anche il TEST". Il test split (oof_test/is_test) viene calcolato ma mai valutato né restituito.
+train_mlp.py: apply_eo = epoch > 20 è hardcoded e alpha_schedule usa max_epoch=120 di default (non passato) mentre N_EPOCHS=200. Il warmup coincide (20), ma lo schedule satura a epoch 120 anche se alleni fino a 200. Verifica che sia voluto.
+build_dynamic.py: lmk_oh (righe 108) viene calcolato e poi cancellato senza mai entrare in X (usi lmk_spl). Compute morto.
+run_realData.py riga 361: trend_cols = ["bd_pct_trend", ...] definito e mai usato; per di più i nomi non coincidono con quelli generati da build_dynamic (bd_pct_trend4, con suffisso delta). Fuorviante, da rimuovere.
+Default obsoleti: DEFAULT_ALPHAS dentro grid_search.py/grid_search2.py è ancora [0.0, 0.3, …, 1.2], diverso da GRID_ALPHAS in config.py (griglia raffinata con 0.08). Va bene finché passi cfg["grid_alphas"], ma chiunque chiami senza alphas prende la griglia sbagliata.
