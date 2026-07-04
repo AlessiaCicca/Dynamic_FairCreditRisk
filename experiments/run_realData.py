@@ -527,7 +527,7 @@ def main():
     df_agg, df_dyn_lmk, df_auc = run_fairness_analysis(
     y_static=static_data["y"][mask_s],
     static_oof=res_static["oof_preds"][mask_s],
-    sens_by_attr_static=static_sens_by_attr,
+    sens_by_attr_static={k: v[mask_s] for k, v in static_sens_by_attr.items()},
     y_dynamic=dyn_yh,                    
     dynamic_oof=dyn_pd,                      
     sens_by_attr_dynamic=dyn_sens_collapsed, 
