@@ -190,7 +190,7 @@ def _eval_dynamic(preds, y, ids, time, sens, group_names, eval_th, n_bins):
 # --------------------------------------------------------------------------- #
 def _fit_predict(splits, X, y, groups, sensitive,
                  time_arr, subj_ids, model_name,
-                 alpha, beta, n_bins, collapse_pdh, **train_kwargs):
+                 alpha, beta, n_bins, collapse_pdh,  verbose_folds=False, **train_kwargs):
     """
     For each pre-computed (train, val, test) fold: fit on train, pick the threshold
     on train, and store predictions into val / test / full OOF arrays. The split is
@@ -205,18 +205,17 @@ def _fit_predict(splits, X, y, groups, sensitive,
 
     thresholds = []
     model_last = scaler_last = None
-
-    for tr_idx, val_idx, test_idx in splits:
+    for fold, (tr_idx, val_idx, test_idx) in enumerate(splits):
         te_idx = np.concatenate([val_idx, test_idx])
 
-        # train MLP on the training fold, predict on the whole held-out (val + test)
+         # train MLP on the training fold, predict on the whole held-out (val + test)
         p_te, p_tr, model, scaler = train_mlp(
             X[tr_idx], y[tr_idx], X[te_idx], y[te_idx],
             sensitive_tr=sensitive[tr_idx] if sensitive is not None else None,
             time_tr=time_arr[tr_idx] if is_dyn else None,
             subj_ids_tr=subj_ids[tr_idx] if subj_ids is not None else None,
             model_name=model_name, alpha=alpha, beta=beta,
-            verbose=False, **train_kwargs,
+            verbose=(verbose_folds and fold == 0), **train_kwargs,
         )
 
         # map held-out predictions back to global val / test / full positions
@@ -235,6 +234,19 @@ def _fit_predict(splits, X, y, groups, sensitive,
             thresholds.append(find_best_threshold(y[tr_idx], p_tr))
 
         model_last, scaler_last = model, scaler
+
+        # per-fold log (only when requested, e.g. from run_cv)
+        if verbose_folds:
+            if collapse_pdh:
+                te_pdh = _collapse_fold(p_te, y[te_idx], groups[te_idx],
+                                        time_arr[te_idx], n_bins)
+                auc_fold = (roc_auc_score(te_pdh["yh"].astype(int), te_pdh["pdh"])
+                            if te_pdh["yh"].nunique() > 1 else float("nan"))
+            else:
+                auc_fold = (roc_auc_score(y[te_idx], p_te)
+                            if len(np.unique(y[te_idx])) > 1 else float("nan"))
+            print(f"  Fold {fold + 1}  |  pred_mean_test={p_te.mean():.4f}"
+                  f"  |  AUC: {auc_fold:.4f}  |  th={thresholds[-1]:.5f}")
 
     return dict(
         oof_val=oof_val, oof_test=oof_test, oof_full=oof_full,
@@ -260,7 +272,7 @@ def _fairness(oof, mask, y, groups, time_arr, sensitive, group_names, th, n_bins
 def run(X, y, groups, sensitive, splits, group_names,
         time_arr=None, subj_ids=None, model_name="",
         n_bins=None, collapse_pdh=False, is_dynamic=False,
-        grid_search=False, coefs=None, **train_kwargs):
+        grid_search=False, coefs=None, verbose_folds=False,  **train_kwargs):
     """
     Run cross-validation on the pre-computed `splits` (univocal division).
 
@@ -272,7 +284,7 @@ def run(X, y, groups, sensitive, splits, group_names,
     """
     def _one(alpha, beta):
         fp = _fit_predict(splits, X, y, groups, sensitive, time_arr, subj_ids,
-                          model_name, alpha, beta, n_bins, collapse_pdh, **train_kwargs)
+                          model_name, alpha, beta, n_bins, collapse_pdh,  verbose_folds=verbose_folds,**train_kwargs)
         th = fp["threshold"]
         val = _fairness(fp["oof_val"], fp["is_val"], y, groups, time_arr,
                         sensitive, group_names, th, n_bins, is_dynamic)
@@ -326,6 +338,11 @@ def run_cv(X, y, groups, sensitive,
     Final CV for one model at a fixed coefficient. If `splits` is not given it is
     built here with make_splits (so the caller can share the SAME splits between
     run_cv and run_grid_search).
+
+    Evaluation is done ONLY on the TEST half of each held-out fold, so it stays
+    disjoint from the VAL half used by the grid search to select the coefficient.
+    `oof_preds` is a full-length array filled only at the test positions (NaN
+    elsewhere); use `is_test` to restrict any downstream analysis to those rows.
     """
     if splits is None:
         splits = make_splits(y, groups, n_splits=n_splits, val_size=val_size, seed=split_seed)
@@ -333,23 +350,28 @@ def run_cv(X, y, groups, sensitive,
     r = run(X, y, groups, sensitive, splits, group_names,
             time_arr=time_arr, subj_ids=subj_ids, model_name=model_name,
             n_bins=n_bins, collapse_pdh=collapse_pdh,
-            is_dynamic=(time_arr is not None), grid_search=False, **train_kwargs)
+            is_dynamic=(time_arr is not None), grid_search=False,  verbose_folds=True,**train_kwargs)
 
-    # per-fold performance metrics on the full held-out, for the summary table
+    # per-fold performance metrics on the TEST portion only, for the summary table
     metrics_list = []
     for tr_idx, val_idx, test_idx in splits:
-        te_idx = np.concatenate([val_idx, test_idx])
         if collapse_pdh:
-            te_pdh = _collapse_fold(r["oof_preds"][te_idx], y[te_idx],
-                                    groups[te_idx], time_arr[te_idx], n_bins)
+            te_pdh = _collapse_fold(r["oof_test"][test_idx], y[test_idx],
+                                    groups[test_idx], time_arr[test_idx], n_bins)
             metrics_list.append(metrics_all(te_pdh["yh"].astype(int),
                                             te_pdh["pdh"], r["threshold"]))
         else:
-            metrics_list.append(metrics_all(y[te_idx].astype(int),
-                                            r["oof_preds"][te_idx], r["threshold"]))
+            metrics_list.append(metrics_all(y[test_idx].astype(int),
+                                            r["oof_test"][test_idx], r["threshold"]))
 
     summary = agg_mean_sd(metrics_list)
     summary["Model"] = model_name.upper()
+
+    # expose predictions ONLY on the test rows (NaN elsewhere -> fails loud if not subset)
+    oof_test_only = np.full(len(y), np.nan, dtype=np.float64)
+    oof_test_only[r["is_test"]] = r["oof_test"][r["is_test"]]
+
+    r["oof_preds"] = oof_test_only
     r["metrics"] = metrics_list
     r["summary"] = summary
     return r

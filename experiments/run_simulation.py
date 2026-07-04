@@ -44,8 +44,7 @@ from config import (
 )
 from src.data.build_static        import build_static
 from src.data.build_dynamic       import build_dynamic
-from src.training.cross_validation import run_cv, build_summary_table, find_best_threshold
-from src.training.grid_search      import run_grid_search, plot_tradeoff
+from src.training.run_train import run_cv, build_summary_table, find_best_threshold,run_grid_search, plot_tradeoff,make_splits
 from src.evaluation.fairness_metrics import (
     fairness_metrics, filter_sensitive, res_to_row,
     print_fairness_report, compute_adTPR_adFPR,
@@ -372,11 +371,18 @@ def main():
         t_min=t_min, t_max=t_max,
     )
 
+    splits_d = make_splits(dynamic_data["y"], dynamic_data["groups"], n_splits=cfg["n_folds"])
+    splits_s = make_splits(static_data["y"],  static_data["groups"],  n_splits=cfg["n_folds"])
+
+
     print("\nTraining M_STATIC...")
     res_static = run_cv(
         X=static_data["X"], y=static_data["y"],
         groups=static_data["groups"], sensitive=static_data["sensitive"],
-        model_name="static", n_splits=cfg["n_folds"], **train_kwargs,
+        model_name="static", n_splits=cfg["n_folds"], 
+        group_names=GROUP_NAMES_SIM,  
+        splits=splits_s,                           
+        **train_kwargs,
     )
     n_bins = cfg["horizon"] // cfg.get("delta", 1)
 
@@ -386,14 +392,19 @@ def main():
         groups=dynamic_data["groups"], sensitive=dynamic_data["sensitive"],
         time_arr=dynamic_data["lmk_vals"], subj_ids=dynamic_data["groups"],
         model_name="dynamic", n_splits=cfg["n_folds"],
-        landmarks=cfg["landmarks"],  collapse_pdh=True, n_bins=n_bins, **train_kwargs,
+        landmarks=cfg["landmarks"], collapse_pdh=True, n_bins=n_bins,
+        group_names=GROUP_NAMES_SIM,          
+        splits=splits_d,                     
+        **train_kwargs,
     )
+    mask_d = res_dynamic["is_test"]
+    mask_s = res_static["is_test"]
 
     pdh_df = collapse_to_pdh(
-        oof_hazard    = res_dynamic["oof_preds"],
-        event_bin     = dynamic_data["y"],
-        ids           = dynamic_data["groups"],
-        lmk_vals      = dynamic_data["lmk_vals"],
+        oof_hazard    = res_dynamic["oof_preds"][mask_d],
+        event_bin     = dynamic_data["y"][mask_d],
+        ids           = dynamic_data["groups"][mask_d],
+        lmk_vals      = dynamic_data["lmk_vals"][mask_d],
         n_bins        = n_bins,
         complete_only = True,
     )
@@ -451,8 +462,8 @@ def main():
     th_static = res_static["threshold"]
 
     df_agg, df_dyn_lmk, df_auc = run_fairness_analysis(
-        y_static=static_data["y"],
-        static_oof=res_static["oof_preds"],
+        y_static=static_data["y"][mask_s],
+        static_oof=res_static["oof_preds"][mask_s],
         sens_static=static_data["sensitive"],
         y_dynamic=dyn_yh,
         dynamic_oof=dyn_pd,
@@ -492,6 +503,8 @@ def main():
             eo_mode_d=cfg["eo_mode_d"],
             schedule_mode_d=cfg["schedule_mode_d"],
             n_bins=cfg["horizon"] // cfg.get("delta", 1),
+            splits_static=splits_s,        
+            splits_dynamic=splits_d,          
             out_dir=out_dir, run_tag=run_tag,
         )
         plot_tradeoff(df_grid, out_dir=out_dir, run_tag=run_tag)
