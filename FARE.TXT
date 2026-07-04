@@ -1,3 +1,5 @@
+GRID SEARCH TUTTO A 2
+
 Minori / pulizia
 
 cross_validation.py righe 98 e 101: oof_preds[te] = p_te duplicato (innocuo).
