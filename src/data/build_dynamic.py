@@ -10,6 +10,7 @@ import gc
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import OneHotEncoder
+from sklearn.preprocessing import SplineTransformer
 
 
 def build_dynamic(
@@ -27,10 +28,7 @@ def build_dynamic(
     enc_cat=None,
 ):
 
-    # ---- Trend a `delta` sul panel completo, PRIMA dello snapshot ----
-    # Il modello landmark congela x(L): reintroduciamo la dinamica pre-landmark
-    # come Δx = x(L) - x(L-delta). Calcolato qui perche' richiede la storia
-    # longitudinale, persa dopo lo snapshot. Congelato a x(L) => nessun leakage.
+    #  Δx = x(L) - x(L-delta)
     trend_base_cols = ["bd_pct", "current_upb", "estimated_ltv", "current_interest_rate"]
     trend_cols = []
     for col in trend_base_cols:
@@ -38,12 +36,10 @@ def build_dynamic(
             continue
         tname = f"{col}_trend{delta}"
         s = df.groupby(id_col)[col].transform(lambda x: x - x.shift(delta))
-        # clip per-colonna su quantili (NON un fisso ±2: current_upb ha scala grande)
         lo, hi = s.quantile(0.01), s.quantile(0.99)
         df[tname] = s.clip(lo, hi).fillna(0.0)
         trend_cols.append(tname)
 
-    # i trend entrano come TVC: congelati a x(L) nello snapshot
     tvc_cols = list(tvc_cols) + trend_cols
     
     # For each landmark L:
@@ -103,19 +99,14 @@ def build_dynamic(
 
     # Temporal baseline hazard: one-hot of bin_time (loan age at the bin)
     all_bin_times = sorted({L + delta * j for L in landmarks for j in range(n_bins)})
-    enc_lmk = OneHotEncoder(handle_unknown="ignore", sparse_output=False, dtype=np.float32)
-    enc_lmk.fit(np.array(all_bin_times).reshape(-1, 1))
-    lmk_oh            = enc_lmk.transform(landmark_df[["bin_time"]])
-    lmk_feature_names = [f"bin_{t}" for t in all_bin_times]
-    from sklearn.preprocessing import SplineTransformer
 
-    n_knots   = 4         # nodi interni: 3-5 ragionevole; piu' nodi = piu' flessibile
-    spline_deg = 3         # cubiche
+    n_knots   = 4         
+    spline_deg = 3         
 
     spline_tf = SplineTransformer(
         n_knots=n_knots, degree=spline_deg,
-        include_bias=False,          # evita collinearita' con l'intercetta del modello
-        knots="quantile",            # nodi sui quantili di bin_time -> piu' risoluzione dove ci sono dati
+        include_bias=False,         
+        knots="quantile",            
     )
     # fit sul range completo dei bin_time osservati
     spline_tf.fit(np.asarray(all_bin_times, dtype=np.float64).reshape(-1, 1))
@@ -150,7 +141,7 @@ def build_dynamic(
     # List of all column names
     feature_names = static_cols + tvc_cols + cat_feature_names + lmk_feature_names
 
-    del cats, lmk_oh, landmark_df
+    del cats, landmark_df
     gc.collect()
 
     return dict(
@@ -161,7 +152,6 @@ def build_dynamic(
         lmk_vals      = lmk_vals,
         bin_time_vals = bin_time_vals, 
         enc_cat       = enc_cat,
-        enc_lmk       = enc_lmk,
         medians       = medians,
         feature_names = feature_names,
     )
