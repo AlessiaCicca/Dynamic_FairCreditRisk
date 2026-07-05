@@ -1,7 +1,7 @@
 import torch
 
 
-def alpha_schedule(epoch, time_val, max_epoch=120, warmup=20,
+def alpha_schedule(epoch, time_val, max_epoch=200, warmup=20,
                    t_min=0, t_max=48, mode="u_shaped"):
     # Null penalty in firsts epochs
     if epoch < warmup:

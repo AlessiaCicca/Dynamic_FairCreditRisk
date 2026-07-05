@@ -10,7 +10,6 @@ source("utils.R")                    # utility functions
 source("genvar.R")                   # covariate generation (VAR process)
 source("timevarying_gnrt.R")         # continuous survival time generation
 source("traindtv_autocorr_gnrt.R")   # discrete-time training data generation
-source("testdtv_gnrt.R")             # test data generation
 
 # --- Simulation setup ---
 matsigma  <- create_matsigma()
@@ -27,7 +26,7 @@ dir.create(run_folder)
 cat("Output folder:", run_folder, "\n")
 
 for (sc in scenarios) {
-  result <- traindtv_autocorr_gnrt(nsub = 6000, matsigma = matsigma, scenario = sc)
+  result <- traindtv_autocorr_gnrt(nsub = 24000, matsigma = matsigma, scenario = sc)
   
   # --- Compute event counts and percentages by group S ---
   df        <- result$fullData
@@ -75,13 +74,6 @@ for (sc in scenarios) {
   addWorksheet(wb, train_sheet)
   writeData(wb, train_sheet, result$fullData)
   
-  
-  # ---- TEST DATA ----
-  test_list <- testdtv_gnrt(data = result$fullData, ntest  = 600, id = "ID", period = "Time", y  = "Event")
-  for (t in seq_along(test_list)) {
-    write.csv(test_list[[t]], 
-              file = file.path(run_folder, paste0("test_", sc, "_t", t, ".csv")), row.names = FALSE)
-  }
 }
 
 

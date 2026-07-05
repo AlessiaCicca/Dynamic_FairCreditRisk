@@ -357,8 +357,6 @@ def main():
     
     df["sens_loan"] = df[sens_col_map[args.fair_attr]] 
 
-    trend_cols = ["bd_pct_trend", "estimated_ltv_trend", "current_upb_trend"]
-
     enc_cat = OneHotEncoder(handle_unknown="ignore",
                              sparse_output=False, dtype=np.float32)
     enc_cat.fit(df[CAT_COLS])

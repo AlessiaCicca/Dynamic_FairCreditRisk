@@ -270,16 +270,55 @@ def run(X, y, groups, sensitive, splits, group_names,
 
     records = []
     coef_name = "alpha" if is_dynamic else "beta"
-    for c in coefs:
+
+    # The baseline (coef=0.0) threshold is used to evaluate separation at a FIXED
+    # threshold for every other coefficient, isolating the effect of the fairness
+    # loss from the effect of the F1-optimal threshold moving with the coefficient.
+    # Evaluated first (regardless of its position in `coefs`) so it's available
+    # for every row, and cached so it's never trained twice.
+    results_cache = {}
+
+    def _eval_coef(c):
         r = _one(c, 0.0) if is_dynamic else _one(0.0, c)
+        results_cache[c] = r
+        return r
+
+    fixed_th = None
+    if 0.0 in coefs:
+        fixed_th = _eval_coef(0.0)["threshold"]
+
+    for c in coefs:
+        r = results_cache[c] if c in results_cache else _eval_coef(c)
+
+        if fixed_th is not None:
+            val_fixed = _fairness(r["oof_val"], r["is_val"], y, groups, time_arr,
+                                  sensitive, group_names, fixed_th, n_bins, is_dynamic)
+            test_fixed = _fairness(r["oof_test"], r["is_test"], y, groups, time_arr,
+                                   sensitive, group_names, fixed_th, n_bins, is_dynamic)
+        else:
+            val_fixed = (np.nan, np.nan, np.nan)
+            test_fixed = (np.nan, np.nan, np.nan)
+
+        # Combined selection criterion: worst-case (max) of the mobile-threshold
+        # and fixed-threshold separation. A coefficient is only considered good
+        # if it's good under BOTH threshold policies, not just one -- guards
+        # against picking a coefficient that looks good only because the F1
+        # threshold happened to move favorably for it at that specific point.
+        sep_val_mobile = r["val"][1]
+        sep_val_fixed = val_fixed[1]
+       
         records.append({
             "coef": c, "coef_name": coef_name,
-            # selection is done on VAL
+            # selection is done on VAL, own (per-coefficient) F1-optimal threshold
             "auc_mean": r["val"][0], "separation_auc": r["val"][1], "separation_mean": r["val"][2],
-            # unbiased report on TEST
+            # unbiased report on TEST, own threshold
             "auc_mean_test": r["test"][0], "separation_auc_test": r["test"][1],
             "separation_mean_test": r["test"][2],
             "threshold": r["threshold"],
+            # same predictions, but re-evaluated at the FIXED (baseline) threshold
+            "separation_auc_val_fixed": val_fixed[1], "separation_mean_val_fixed": val_fixed[2],
+            "separation_auc_test_fixed": test_fixed[1], "separation_mean_test_fixed": test_fixed[2],
+            "fixed_threshold": fixed_th,
         })
     return pd.DataFrame(records)
 
@@ -362,7 +401,7 @@ def run_grid_search(
     df_s["model"] = "M_STATIC"
     for _, row in df_s.iterrows():
         print(f"  beta={row['coef']:.2f}  AUC(val)={row['auc_mean']:.4f}  "
-              f"sep(val)={row['separation_auc']:.4f}  sep(test)={row['separation_auc_test']:.4f}")
+              f"sep(val)={row['separation_auc']:.4f}  sep(val,fixed_th)={row['separation_auc_val_fixed']:.4f} ")
 
     # M_DYNAMIC (coefficient = alpha)
     print("\n" + "=" * 60 + "\nGRID SEARCH — M_DYNAMIC\n" + "=" * 60)
@@ -374,72 +413,16 @@ def run_grid_search(
     df_d["model"] = "M_DYNAMIC"
     for _, row in df_d.iterrows():
         print(f"  alpha={row['coef']:.2f}  AUC(val)={row['auc_mean']:.4f}  "
-              f"sep(val)={row['separation_auc']:.4f}  sep(test)={row['separation_auc_test']:.4f}")
+              f"sep(val)={row['separation_auc']:.4f}  sep(val,fixed_th)={row['separation_auc_val_fixed']:.4f} ")
 
     df_grid = pd.concat([df_s, df_d], ignore_index=True)
     out_dir = Path(out_dir)
     df_grid.to_csv(out_dir / f"grid_tradeoff_{run_tag}.csv", index=False)
     print(df_grid.to_string(index=False))
-    print_best_points(df_grid, out_dir)
     return df_grid
 
 
 #  Best coefficient selected on val
-#  M_STATIC:  maximizes a normalized AUC-vs-separation trade-off score.
-#  M_DYNAMIC: minimizes separation subject to AUC >= static baseline AUC (beta=0).
-def _compute_best(df_grid):
-
-    static_baseline = df_grid[(df_grid["model"] == "M_STATIC") &
-                              (df_grid["coef"] == 0.0)]["auc_mean"].values
-    static_auc = float(static_baseline[0]) if len(static_baseline) > 0 else 0.0
-
-    sub_s = df_grid[df_grid["model"] == "M_STATIC"]\
-        .dropna(subset=["auc_mean", "separation_auc"]).reset_index(drop=True)
-
-    best = {}
-    trade_score = None
-    if not sub_s.empty:
-        auc_min, auc_max = sub_s["auc_mean"].min(), sub_s["auc_mean"].max()
-        sep_min, sep_max = sub_s["separation_auc"].min(), sub_s["separation_auc"].max()
-
-        def trade_score(auc, sep):
-            an = (auc - auc_min) / (auc_max - auc_min + 1e-9)
-            sn = (sep - sep_min) / (sep_max - sep_min + 1e-9)
-            return an - sn
-
-        scores = np.array([trade_score(a, s) for a, s in
-                           zip(sub_s["auc_mean"], sub_s["separation_auc"])])
-        best["M_STATIC"] = sub_s.iloc[np.argmax(scores)]
-
-    sub_d = df_grid[df_grid["model"] == "M_DYNAMIC"]\
-        .dropna(subset=["auc_mean", "separation_auc"]).reset_index(drop=True)
-    if not sub_d.empty:
-        feasible = sub_d[sub_d["auc_mean"] >= static_auc]
-        if feasible.empty:
-            feasible = sub_d  # fallback
-        best["M_DYNAMIC"] = feasible.loc[feasible["separation_auc"].idxmin()]
-
-    return best, trade_score
-
-
-def print_best_points(df_grid, out_dir):
-    best, _ = _compute_best(df_grid)
-    print("\n=== BEST COEFFICIENT (selected on VAL, test also reported) ===")
-    rows = []
-    for model_name, b in best.items():
-        rows.append({
-            "model": model_name, "best_coef": b["coef"], "coef_name": b["coef_name"],
-            "auc_val": round(b["auc_mean"], 4),
-            "separation_auc_val": round(b["separation_auc"], 4),
-            "auc_test": round(b.get("auc_mean_test", np.nan), 4),
-            "separation_auc_test": round(b.get("separation_auc_test", np.nan), 4),
-        })
-        print(f"  {model_name:<12}  {b['coef_name']}={b['coef']:.2f}  "
-              f"AUC(val)={b['auc_mean']:.4f}  sep(val)={b['separation_auc']:.4f}  "
-              f"sep(test)={b.get('separation_auc_test', np.nan):.4f}")
-    pd.DataFrame(rows).to_csv(Path(out_dir) / "grid_best_points.csv", index=False)
-
-
 def build_summary_table(cv_results):
     rows = []
     for name, res in cv_results.items():
@@ -452,14 +435,18 @@ def build_summary_table(cv_results):
 
 
 def plot_tradeoff(df_grid, out_dir, run_tag="run"):
-    best, trade_score = _compute_best(df_grid)
+    # No automatic "best" selection anymore -- the plot shows both the
+    # mobile-threshold and fixed-threshold separation curves so the
+    # coefficient can be chosen by inspection, with explicit reasoning.
     static_base = df_grid[(df_grid["model"] == "M_STATIC") &
                           (df_grid["coef"] == 0.0)]["auc_mean"].values
     static_base = float(static_base[0]) if len(static_base) > 0 else 0.0
 
     fig, axes = plt.subplots(1, 2, figsize=(12, 6))
-    fig.suptitle("AUC and Separation AUC (val) as a function of the fairness coefficient",
-                 fontsize=13, fontweight="bold", y=1.02)
+    fig.suptitle("AUC and Separation (val) as a function of the fairness coefficient\n"
+                 "solid = AUC | dashed = separation (mobile threshold) | "
+                 "dotted = separation (fixed threshold)",
+                 fontsize=12, fontweight="bold", y=1.04)
 
     for ax, (model_name, style) in zip(axes, MODEL_STYLES.items()):
         sub = df_grid[df_grid["model"] == model_name]\
@@ -471,33 +458,29 @@ def plot_tradeoff(df_grid, out_dir, run_tag="run"):
 
         coefs = sub["coef"].to_numpy()
         aucs = sub["auc_mean"].to_numpy()
-        seps = sub["separation_auc"].to_numpy()
+        seps_mobile = sub["separation_auc"].to_numpy()
+        # fixed-threshold separation may be all-NaN if coef=0.0 wasn't in the grid
+        seps_fixed = (sub["separation_auc_val_fixed"].to_numpy()
+                      if "separation_auc_val_fixed" in sub.columns
+                      else np.full_like(seps_mobile, np.nan))
         color, clabel = style["color"], style["coef_label"]
-
-        # different best_idx criterion for static vs dynamic
-        if model_name in best:
-            best_coef = best[model_name]["coef"]
-            best_idx = int(np.argmin(np.abs(coefs - best_coef)))
-        else:
-            best_idx = 0
 
         ax2 = ax.twinx()
         ax.plot(coefs, aucs, color=color, linewidth=2.2, marker=style["marker"],
                 markersize=7, zorder=3)
-        ax2.plot(coefs, seps, color=color, linewidth=2.2, linestyle="--",
+        ax2.plot(coefs, seps_mobile, color=color, linewidth=2.2, linestyle="--",
                  marker=style["marker"], markersize=7, alpha=0.55, zorder=3)
+        if not np.all(np.isnan(seps_fixed)):
+            ax2.plot(coefs, seps_fixed, color=color, linewidth=2.2, linestyle=":",
+                     marker=style["marker"], markersize=6, alpha=0.85, zorder=4)
 
         # draw the static AUC baseline used as constraint for the dynamic model
         if model_name == "M_DYNAMIC":
             ax.axhline(static_base, color="gray", linestyle=":", linewidth=1.5, alpha=0.7)
 
-        for vals, ax_ in [(aucs, ax), (seps, ax2)]:
-            ax_.scatter([coefs[best_idx]], [vals[best_idx]], s=320, marker="*",
-                        color="gold", edgecolors=color, linewidths=1.5, zorder=6)
-
         ax.set_xlabel(f"coefficient ({clabel})", fontsize=11)
         ax.set_ylabel("AUC val  (higher is better)", fontsize=10, color=color)
-        ax2.set_ylabel("Separation AUC val  (lower is fairer)", fontsize=10, color=color)
+        ax2.set_ylabel("Separation val  (lower is fairer)", fontsize=10, color=color)
         ax.tick_params(axis="y", labelcolor=color)
         ax2.tick_params(axis="y", labelcolor=color)
         ax.set_title(model_name, fontsize=12, fontweight="bold", color=color)
@@ -507,9 +490,9 @@ def plot_tradeoff(df_grid, out_dir, run_tag="run"):
             Line2D([0], [0], color=color, linewidth=2, marker=style["marker"],
                    label="AUC val (solid)"),
             Line2D([0], [0], color=color, linewidth=2, linestyle="--",
-                   marker=style["marker"], alpha=0.55, label="Separation AUC val (dashed)"),
-            Line2D([0], [0], marker="*", color="gold", markersize=11,
-                   markeredgecolor=color, linewidth=0, label="Best coefficient"),
+                   marker=style["marker"], alpha=0.55, label="Separation val, mobile threshold (dashed)"),
+            Line2D([0], [0], color=color, linewidth=2, linestyle=":",
+                   marker=style["marker"], alpha=0.85, label="Separation val, fixed threshold (dotted)"),
         ]
         if model_name == "M_DYNAMIC":
             legend_handles.append(
