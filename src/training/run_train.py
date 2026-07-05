@@ -422,7 +422,6 @@ def run_grid_search(
     return df_grid
 
 
-#  Best coefficient selected on val
 def build_summary_table(cv_results):
     rows = []
     for name, res in cv_results.items():

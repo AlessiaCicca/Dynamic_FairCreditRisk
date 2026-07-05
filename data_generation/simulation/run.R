@@ -42,9 +42,10 @@ for (sc in scenarios) {
 
   df_info <- data.frame(Metric = "Death Rate", Value = result$Info$DRate)
 
+
+
   # --- Coefficients used in generation ---
-  coefficients <- create_coeff(scenario = sc, nsub = 6000)
-  coeff_list <- coefficients$Coeff
+  coeff_list <- result$Info$Coeff
   df_coeff <- do.call(rbind, lapply(names(coeff_list), function(nm) {
     vals <- as.vector(coeff_list[[nm]])
     data.frame(
