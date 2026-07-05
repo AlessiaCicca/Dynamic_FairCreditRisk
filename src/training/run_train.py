@@ -1,20 +1,10 @@
 """
-Unified GroupKFold cross-validation for both final evaluation and grid search.
+GroupKFold cross-validation for both final evaluation and grid search.
 
 GroupKFold: A cross-validation method that splits the data into K folds while keeping all
 observations from the same subject in the same fold, preventing data leakage across train and
 test sets.
 
-OOF (Out-of-Fold) predictions: Predictions generated for each subject when that subject belongs
-to the held-out fold, ensuring that every prediction is produced by a model that was not trained
-on that subject.
-
-The train/val/test division is decided ONCE (make_splits) and reused by both entry points, so it
-is univocal: what the grid search uses as `val` (to select the coefficient) stays disjoint from
-`test` (used to report it), instead of relying on a matching random seed in two places.
-  - train : fit the model and pick the F1-optimal threshold
-  - val   : select the fairness coefficient (grid search only)
-  - test  : unbiased report of the selected coefficient
 """
 
 import numpy as np
@@ -38,32 +28,22 @@ MODEL_STYLES = {
 }
 
 
-# --------------------------------------------------------------------------- #
-#  Split defined upfront (single source of truth)
-# --------------------------------------------------------------------------- #
+# Split definition: Build the train/val/test folds once and return them as a list of
+#   (train_idx, val_idx, test_idx) tuples.
 def make_splits(y, groups, n_splits=5, val_size=0.5, seed=SEED):
-    """
-    Build the train/val/test folds ONCE and return them as a list of
-    (train_idx, val_idx, test_idx) tuples.
-    - GroupKFold splits by subject: same loan is never both in train and held-out.
-    - GroupShuffleSplit splits the held-out fold into val/test, again by subject,
-      with a fixed seed. This is THE division: run_cv and run_grid_search receive it,
-      they do not recreate it.
-    """
+    # GroupKFold splits by subject: same loan is never both in train and test+val set.
     gkf = GroupKFold(n_splits=n_splits)
     splits = []
+    # GroupShuffleSplit splits the test+val fold into val/test, again by subject,
+    # run_cv and run_grid_search receive that division
     for tr_idx, te_idx in gkf.split(np.zeros(len(y)), y, groups):
         gss = GroupShuffleSplit(n_splits=1, test_size=val_size, random_state=seed)
         a_pos, b_pos = next(gss.split(te_idx, groups=groups[te_idx]))
         splits.append((tr_idx, te_idx[a_pos], te_idx[b_pos]))
     return splits
 
-
-# --------------------------------------------------------------------------- #
-#  Helpers
-# --------------------------------------------------------------------------- #
+# F1-optimal threshold
 def find_best_threshold(y_true, p, max_th_quantile=0.90):
-    """F1-optimal threshold, capped at a high quantile of the scores."""
     p = np.clip(p, 0, 1)
     prec, rec, thresholds = precision_recall_curve(y_true, p)
     if len(thresholds) == 0:
@@ -73,9 +53,9 @@ def find_best_threshold(y_true, p, max_th_quantile=0.90):
     f1_scores[thresholds > max_th] = 0
     return float(thresholds[np.argmax(f1_scores)])
 
-
+# From hazard per bin to PD(L,L+h)
+# Same function of main run
 def _collapse_fold(hazard, event_bin, ids, lmk, n_bins, complete_only=True):
-    """From per-bin hazard to PD(L, L+h), aggregating by (subject, landmark)."""
     h = np.clip(hazard, 1e-7, 1 - 1e-7)
     d = pd.DataFrame({
         "id": ids, "L": lmk,
@@ -94,9 +74,8 @@ def _collapse_fold(hazard, event_bin, ids, lmk, n_bins, complete_only=True):
         out = out[out["n"] == n_bins]
     return out
 
-
+#   AUC, Brier score, F1 for single fold
 def metrics_all(y_true, p, threshold=0.5):
-    """AUC, Brier score, F1 for a single set of predictions."""
     p = np.clip(p, 0, 1)
     auc = roc_auc_score(y_true, p) if len(np.unique(y_true)) > 1 else np.nan
     return dict(
@@ -106,9 +85,8 @@ def metrics_all(y_true, p, threshold=0.5):
         Th=threshold,
     )
 
-
+# Compute mean and sd accross all folds
 def agg_mean_sd(list_of_dicts):
-    """Compute mean and sd across all folds."""
     out = {}
     for k in list_of_dicts[0].keys():
         vals = [d[k] for d in list_of_dicts]
@@ -117,11 +95,8 @@ def agg_mean_sd(list_of_dicts):
     return out
 
 
-# --------------------------------------------------------------------------- #
-#  Separation evaluation on a set of predictions
-# --------------------------------------------------------------------------- #
+# AUC and separation on the static (aggregate) predictions
 def _eval_static(preds, y, sens, group_names, eval_th):
-    """AUC and separation on the static (aggregate) predictions."""
     yt_f, yp_f, sn_f = filter_sensitive(np.asarray(y).astype(int), preds, sens)
     if len(np.unique(yt_f)) < 2 or len(np.unique(sn_f)) < 2:
         return np.nan, np.nan, np.nan
@@ -131,12 +106,10 @@ def _eval_static(preds, y, sens, group_names, eval_th):
     s = res.get("axioms", {}).get("separation", np.nan)
     return auc, s, s
 
-
+#  Collapse per-bin hazards to PD-H, then compute AUC and the separation curve
+#   over landmarks; the fairness AUC is the area under that curve (normalized time).
 def _eval_dynamic(preds, y, ids, time, sens, group_names, eval_th, n_bins):
-    """
-    Collapse per-bin hazards to PD-H, then compute AUC and the separation curve
-    over landmarks; the fairness AUC is the area under that curve (normalized time).
-    """
+
     coll = _collapse_fold(preds, y, ids, time, n_bins).reset_index(drop=True)
 
     # one sensitive value per subject
@@ -185,17 +158,13 @@ def _eval_dynamic(preds, y, ids, time, sens, group_names, eval_th, n_bins):
     return auc, sep_auc, sep_mean
 
 
-# --------------------------------------------------------------------------- #
-#  Shared engine: fit one coefficient over the given splits
-# --------------------------------------------------------------------------- #
+# Main function of the file
+# For each pre-computed (train, val, test) fold: fit on train, pick the threshold
+# on train, and store predictions into val / test
 def _fit_predict(splits, X, y, groups, sensitive,
                  time_arr, subj_ids, model_name,
                  alpha, beta, n_bins, collapse_pdh,  verbose_folds=False, **train_kwargs):
-    """
-    For each pre-computed (train, val, test) fold: fit on train, pick the threshold
-    on train, and store predictions into val / test / full OOF arrays. The split is
-    taken as-is from `splits` (see make_splits), never recreated here.
-    """
+
     is_dyn = time_arr is not None
     oof_val = np.zeros(len(y), dtype=np.float64)
     oof_test = np.zeros(len(y), dtype=np.float64)
@@ -218,7 +187,7 @@ def _fit_predict(splits, X, y, groups, sensitive,
             verbose=(verbose_folds and fold == 0), **train_kwargs,
         )
 
-        # map held-out predictions back to global val / test / full positions
+        # Divide predictions in val and test
         pos = {idx: k for k, idx in enumerate(te_idx)}
         oof_val[val_idx] = p_te[[pos[i] for i in val_idx]]
         oof_test[test_idx] = p_te[[pos[i] for i in test_idx]]
@@ -226,7 +195,7 @@ def _fit_predict(splits, X, y, groups, sensitive,
         is_val[val_idx] = True
         is_test[test_idx] = True
 
-        # threshold is ALWAYS chosen on train (no leakage)
+        # threshold on train
         if collapse_pdh:
             tr_pdh = _collapse_fold(p_tr, y[tr_idx], groups[tr_idx], time_arr[tr_idx], n_bins)
             thresholds.append(find_best_threshold(tr_pdh["yh"], tr_pdh["pdh"]))
@@ -235,7 +204,6 @@ def _fit_predict(splits, X, y, groups, sensitive,
 
         model_last, scaler_last = model, scaler
 
-        # per-fold log (only when requested, e.g. from run_cv)
         if verbose_folds:
             if collapse_pdh:
                 te_pdh = _collapse_fold(p_te, y[te_idx], groups[te_idx],
@@ -255,9 +223,8 @@ def _fit_predict(splits, X, y, groups, sensitive,
         model_last=model_last, scaler_last=scaler_last,
     )
 
-
+# Select predictions is_val or is_test
 def _fairness(oof, mask, y, groups, time_arr, sensitive, group_names, th, n_bins, is_dyn):
-    """Aggregate AUC + separation on the subset selected by `mask`."""
     if group_names is None or mask.sum() == 0:
         return np.nan, np.nan, np.nan
     if is_dyn:
@@ -266,22 +233,13 @@ def _fairness(oof, mask, y, groups, time_arr, sensitive, group_names, th, n_bins
     return _eval_static(oof[mask], y[mask], sensitive[mask], group_names, th)
 
 
-# --------------------------------------------------------------------------- #
-#  Single entry point: the `grid_search` flag is the only branch
-# --------------------------------------------------------------------------- #
+  # Main run: run cross_validation and perform grid_search if flag=True
 def run(X, y, groups, sensitive, splits, group_names,
         time_arr=None, subj_ids=None, model_name="",
         n_bins=None, collapse_pdh=False, is_dynamic=False,
         grid_search=False, coefs=None, verbose_folds=False,  **train_kwargs):
-    """
-    Run cross-validation on the pre-computed `splits` (univocal division).
 
-    grid_search=False : one fixed coefficient (alpha/beta in train_kwargs); reports on TEST.
-    grid_search=True  : loop over `coefs`; select on VAL, report on TEST.
-
-    In both cases val and test come from the same `splits`, so selection (val) and
-    report (test) are guaranteed disjoint.
-    """
+    # for a combination of alpha and beta and call _fit_predict for training 
     def _one(alpha, beta):
         fp = _fit_predict(splits, X, y, groups, sensitive, time_arr, subj_ids,
                           model_name, alpha, beta, n_bins, collapse_pdh,  verbose_folds=verbose_folds,**train_kwargs)
@@ -293,13 +251,14 @@ def run(X, y, groups, sensitive, splits, group_names,
         fp["val"], fp["test"] = val, test
         return fp
 
-    # ---- final evaluation: single coefficient ----
     if not grid_search:
         r = _one(train_kwargs.pop("alpha", 0.0), train_kwargs.pop("beta", 0.0))
         auc_val, sep_auc_val, sep_mean_val = r["val"]
         auc_test, sep_auc_test, sep_mean_test = r["test"]
+        
+        # Store all predictions (full/test/val) that will be used be the related functions
         return dict(
-            oof_preds=r["oof_full"],           # full held-out for downstream descriptive analysis
+            oof_preds=r["oof_full"],
             oof_test=r["oof_test"], is_test=r["is_test"],
             oof_val=r["oof_val"], is_val=r["is_val"],
             threshold=r["threshold"],
@@ -308,7 +267,7 @@ def run(X, y, groups, sensitive, splits, group_names,
             model_last=r["model_last"], scaler_last=r["scaler_last"],
         )
 
-    # ---- grid search: one row per coefficient ----
+
     records = []
     coef_name = "alpha" if is_dynamic else "beta"
     for c in coefs:
@@ -325,25 +284,15 @@ def run(X, y, groups, sensitive, splits, group_names,
     return pd.DataFrame(records)
 
 
-# --------------------------------------------------------------------------- #
-#  Backward-compatible wrappers (same names used by the experiments)
-# --------------------------------------------------------------------------- #
+# Run Cross_Validation
+# Final CV for one model at a fixed coefficient. 
 def run_cv(X, y, groups, sensitive,
            time_arr=None, subj_ids=None,
            model_name="", n_splits=5,
            landmarks=None, collapse_pdh=False, n_bins=None,
            group_names=None, splits=None,
            val_size=0.5, split_seed=SEED, **train_kwargs):
-    """
-    Final CV for one model at a fixed coefficient. If `splits` is not given it is
-    built here with make_splits (so the caller can share the SAME splits between
-    run_cv and run_grid_search).
-
-    Evaluation is done ONLY on the TEST half of each held-out fold, so it stays
-    disjoint from the VAL half used by the grid search to select the coefficient.
-    `oof_preds` is a full-length array filled only at the test positions (NaN
-    elsewhere); use `is_test` to restrict any downstream analysis to those rows.
-    """
+    
     if splits is None:
         splits = make_splits(y, groups, n_splits=n_splits, val_size=val_size, seed=split_seed)
 
@@ -352,7 +301,7 @@ def run_cv(X, y, groups, sensitive,
             n_bins=n_bins, collapse_pdh=collapse_pdh,
             is_dynamic=(time_arr is not None), grid_search=False,  verbose_folds=True,**train_kwargs)
 
-    # per-fold performance metrics on the TEST portion only, for the summary table
+    # per-fold performance metrics on the test portion only, for the summary table
     metrics_list = []
     for tr_idx, val_idx, test_idx in splits:
         if collapse_pdh:
@@ -367,7 +316,6 @@ def run_cv(X, y, groups, sensitive,
     summary = agg_mean_sd(metrics_list)
     summary["Model"] = model_name.upper()
 
-    # expose predictions ONLY on the test rows (NaN elsewhere -> fails loud if not subset)
     oof_test_only = np.full(len(y), np.nan, dtype=np.float64)
     oof_test_only[r["is_test"]] = r["oof_test"][r["is_test"]]
 
@@ -376,7 +324,7 @@ def run_cv(X, y, groups, sensitive,
     r["summary"] = summary
     return r
 
-
+# Loop on alpha and beta list
 def run_grid_search(
     X_static, y_static, grp_static, sens_static,
     X_dynamic, y_dynamic, grp_dynamic, sens_dynamic, lmk_vals,
@@ -387,12 +335,7 @@ def run_grid_search(
     splits_static=None, splits_dynamic=None,
     out_dir=Path("outputs"), run_tag="run",
 ):
-    """
-    Grid search over the AUC vs Separation trade-off for the two MLP models.
-    Separation is the AUC of the fairness curve over time. The coefficient is
-    selected on VAL and reported on TEST, using the same splits as run_cv when
-    `splits_static` / `splits_dynamic` are passed in.
-    """
+
     np.random.seed(SEED)
     try:
         import torch
@@ -441,15 +384,11 @@ def run_grid_search(
     return df_grid
 
 
-# --------------------------------------------------------------------------- #
-#  Best coefficient (ALWAYS selected on val) and reporting
-# --------------------------------------------------------------------------- #
+#  Best coefficient selected on val
+#  M_STATIC:  maximizes a normalized AUC-vs-separation trade-off score.
+#  M_DYNAMIC: minimizes separation subject to AUC >= static baseline AUC (beta=0).
 def _compute_best(df_grid):
-    """
-    M_STATIC:  maximizes a normalized AUC-vs-separation trade-off score.
-    M_DYNAMIC: minimizes separation subject to AUC >= static baseline AUC (beta=0).
-    Selection uses the VAL columns only.
-    """
+
     static_baseline = df_grid[(df_grid["model"] == "M_STATIC") &
                               (df_grid["coef"] == 0.0)]["auc_mean"].values
     static_auc = float(static_baseline[0]) if len(static_baseline) > 0 else 0.0
@@ -502,7 +441,6 @@ def print_best_points(df_grid, out_dir):
 
 
 def build_summary_table(cv_results):
-    """Stack the per-model summary dicts into one table."""
     rows = []
     for name, res in cv_results.items():
         row = res["summary"].copy()
@@ -514,7 +452,6 @@ def build_summary_table(cv_results):
 
 
 def plot_tradeoff(df_grid, out_dir, run_tag="run"):
-    """Plot AUC (val) and Separation AUC (val) against the fairness coefficient."""
     best, trade_score = _compute_best(df_grid)
     static_base = df_grid[(df_grid["model"] == "M_STATIC") &
                           (df_grid["coef"] == 0.0)]["auc_mean"].values
@@ -538,13 +475,11 @@ def plot_tradeoff(df_grid, out_dir, run_tag="run"):
         color, clabel = style["color"], style["coef_label"]
 
         # different best_idx criterion for static vs dynamic
-        if model_name == "M_DYNAMIC":
-            feas = aucs >= static_base
-            best_idx = int(np.argmin(np.where(feas, seps, np.inf))) if feas.any() \
-                else int(np.argmin(seps))
+        if model_name in best:
+            best_coef = best[model_name]["coef"]
+            best_idx = int(np.argmin(np.abs(coefs - best_coef)))
         else:
-            best_idx = int(np.argmax([trade_score(a, s) for a, s in zip(aucs, seps)])) \
-                if trade_score is not None else 0
+            best_idx = 0
 
         ax2 = ax.twinx()
         ax.plot(coefs, aucs, color=color, linewidth=2.2, marker=style["marker"],
