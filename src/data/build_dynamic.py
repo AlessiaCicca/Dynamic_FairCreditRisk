@@ -26,6 +26,7 @@ def build_dynamic(
     first_event_col="FirstEventTime",
     sens_col="sens_loan",
     enc_cat=None,
+    enc_lmk=None,
 ):
 
     #  Δx = x(L) - x(L-delta)
@@ -116,6 +117,13 @@ def build_dynamic(
     ).astype(np.float32)
     lmk_feature_names = [f"spl_{i}" for i in range(lmk_spl.shape[1])]
 
+    # One-hot encoding of the landmark L itself
+    if enc_lmk is None:
+        enc_lmk = OneHotEncoder(handle_unknown="ignore", sparse_output=False, dtype=np.float32)
+        enc_lmk.fit(landmark_df[["landmark"]])
+    lmk_oh = enc_lmk.transform(landmark_df[["landmark"]])
+    lmk_oh_feature_names = list(enc_lmk.get_feature_names_out(["landmark"]))
+
     all_num_cols = static_cols + tvc_cols
 
     # Replaces missing values with the column median 
@@ -127,7 +135,7 @@ def build_dynamic(
     
 
     # Builds the final feature matrix by concatenating all parts
-    X = np.hstack([num, cats, lmk_spl])
+    X = np.hstack([num, cats, lmk_spl, lmk_oh])
 
     # Extracts vectors needed for training
 
@@ -139,7 +147,7 @@ def build_dynamic(
     
 
     # List of all column names
-    feature_names = static_cols + tvc_cols + cat_feature_names + lmk_feature_names
+    feature_names = static_cols + tvc_cols + cat_feature_names + lmk_feature_names + lmk_oh_feature_names
 
     del cats, landmark_df
     gc.collect()
@@ -152,6 +160,7 @@ def build_dynamic(
         lmk_vals      = lmk_vals,
         bin_time_vals = bin_time_vals, 
         enc_cat       = enc_cat,
+        enc_lmk       = enc_lmk,
         medians       = medians,
         feature_names = feature_names,
     )
