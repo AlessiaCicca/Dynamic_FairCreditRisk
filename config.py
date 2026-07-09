@@ -14,11 +14,11 @@ SEED = 42
 
 # Fairness penalty coefficients 
 BETA  = 0.7   # M_STATIC  EO penalty weight
-ALPHA = 0.3 # M_DYNAMIC EO penalty weight
+ALPHA = 0.1 # M_DYNAMIC EO penalty weight
 
 # EO penalty mode
 # Options: "mean" | "weighted" | "trend_aware"
-EO_MODE_D = "mean"   # dynamic model
+EO_MODE_D = "trend_aware"   # dynamic model
 
 # Time schedule mode (alpha_schedule)
 # Options: "flat" | "decay" | "growth" | "u_shaped"  | "n_shaped" 

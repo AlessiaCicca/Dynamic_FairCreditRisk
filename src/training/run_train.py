@@ -95,6 +95,7 @@ def agg_mean_sd(list_of_dicts):
     return out
 
 
+'''
 # AUC and separation on the static (aggregate) predictions
 def _eval_static(preds, y, sens, group_names, eval_th):
     yt_f, yp_f, sn_f = filter_sensitive(np.asarray(y).astype(int), preds, sens)
@@ -157,6 +158,100 @@ def _eval_dynamic(preds, y, ids, time, sens, group_names, eval_th, n_bins):
                 if (not df_t.empty and "separation" in df_t.columns) else np.nan)
     return auc, sep_auc, sep_mean
 
+'''
+
+# AUC and separation on the static (aggregate) predictions
+def _eval_static(preds, y, sens, group_names, eval_th):
+    yt_f, yp_f, sn_f = filter_sensitive(np.asarray(y).astype(int), preds, sens)
+    if len(np.unique(yt_f)) < 2 or len(np.unique(sn_f)) < 2:
+        return np.nan, np.nan, np.nan
+    auc = roc_auc_score(yt_f, yp_f)
+    yb_f = (yp_f >= eval_th).astype(int)
+    res = fairness_metrics(yt_f, yp_f, yb_f, sn_f, group_names, threshold=eval_th)
+    s = res.get("axioms", {}).get("separation", np.nan)
+    return auc, s, s
+
+
+def _integrate_curve(df_t, col, t_min=0.0, t_max=None):
+    if df_t.empty or col not in df_t.columns:
+        return np.nan
+    sub = df_t.dropna(subset=[col])
+    if len(sub) < 2:
+        return np.nan
+    t_v = sub["t"].to_numpy(float)
+    v = sub[col].to_numpy(float)
+    if t_max is None:
+        t_max = t_v.max()
+    if t_max - t_min <= 0:
+        return np.nan
+    area = np.trapezoid(v, t_v)
+    return float(area / (t_max - t_min))
+
+
+def _eval_dynamic(preds, y, ids, time, sens, group_names, eval_th, n_bins):
+    coll = _collapse_fold(preds, y, ids, time, n_bins).reset_index(drop=True)
+
+    sens_by_id = pd.Series(sens, index=ids)
+    sens_by_id = sens_by_id[~sens_by_id.index.duplicated(keep="first")]
+    coll["sens"] = coll["id"].map(sens_by_id)
+
+    eval_preds = coll["pdh"].to_numpy()
+    eval_y = coll["yh"].to_numpy().astype(int)
+    eval_sens = coll["sens"].to_numpy()
+    eval_time = coll["L"].to_numpy()
+
+    # pooled (original)
+    auc_pooled = roc_auc_score(eval_y, eval_preds) if len(np.unique(eval_y)) > 1 else np.nan
+    brier_pooled = brier_score_loss(eval_y, eval_preds)
+    f1_pooled = f1_score(eval_y, (eval_preds >= eval_th).astype(int), zero_division=0)
+
+    # per-landmark
+    perf_rows, time_rows = [], []
+    for t in sorted(np.unique(eval_time)):
+        mask = eval_time == t
+        yt_t, yp_t = eval_y[mask], eval_preds[mask]
+
+        auc_t = roc_auc_score(yt_t, yp_t) if len(np.unique(yt_t)) > 1 else np.nan
+        brier_t = brier_score_loss(yt_t, yp_t) if mask.sum() > 0 else np.nan
+        f1_t = f1_score(yt_t, (yp_t >= eval_th).astype(int), zero_division=0) if mask.sum() > 0 else np.nan
+        perf_rows.append({"t": t, "auc": auc_t, "brier": brier_t, "f1": f1_t})
+
+        yt_f, yp_f, sn_f = filter_sensitive(yt_t, yp_t, eval_sens[mask])
+        if len(np.unique(yt_f)) < 2 or len(np.unique(sn_f)) < 2:
+            continue
+        if pd.Series(sn_f).value_counts().min() < 50:
+            continue
+        yb_f = (yp_f >= eval_th).astype(int)
+        res = fairness_metrics(yt_f, yp_f, yb_f, sn_f, group_names, threshold=eval_th)
+        time_rows.append({"t": t, "separation": res.get("axioms", {}).get("separation", np.nan)})
+
+    df_perf = pd.DataFrame(perf_rows)
+    df_t = pd.DataFrame(time_rows)
+
+    auc_integrated = _integrate_curve(df_perf, "auc")
+    brier_integrated = _integrate_curve(df_perf, "brier")
+    f1_integrated = _integrate_curve(df_perf, "f1")
+    sep_auc = _integrate_curve(df_t, "separation")
+    sep_mean = df_t["separation"].mean() if (not df_t.empty and "separation" in df_t.columns) else np.nan
+
+    print(f"    [pooled]     AUC={auc_pooled:.4f}  Brier={brier_pooled:.4f}  F1={f1_pooled:.4f}")
+    print(f"    [integrated] AUC={auc_integrated:.4f}  Brier(IBS)={brier_integrated:.4f}  F1={f1_integrated:.4f}")
+
+    # SAME 3-element tuple shape as before: (auc, sep_auc, sep_mean),
+    # with pooled/integrated extras attached as attributes on a plain tuple subclass
+    # so nothing downstream that does auc, sep_auc, sep_mean = _eval_dynamic(...) breaks.
+    class _Result(tuple):
+        pass
+
+    result = _Result((auc_pooled, sep_auc, sep_mean))
+    result.auc_pooled = auc_pooled
+    result.auc_integrated = auc_integrated
+    result.brier_pooled = brier_pooled
+    result.brier_integrated = brier_integrated
+    result.f1_pooled = f1_pooled
+    result.f1_integrated = f1_integrated
+    result.df_perf = df_perf
+    return result
 
 # Main function of the file
 # For each pre-computed (train, val, test) fold: fit on train, pick the threshold
@@ -222,7 +317,7 @@ def _fit_predict(splits, X, y, groups, sensitive,
         threshold=float(np.mean(thresholds)),
         model_last=model_last, scaler_last=scaler_last,
     )
-
+'''
 # Select predictions is_val or is_test
 def _fairness(oof, mask, y, groups, time_arr, sensitive, group_names, th, n_bins, is_dyn):
     if group_names is None or mask.sum() == 0:
@@ -231,6 +326,17 @@ def _fairness(oof, mask, y, groups, time_arr, sensitive, group_names, th, n_bins
         return _eval_dynamic(oof[mask], y[mask], groups[mask], time_arr[mask],
                              sensitive[mask], group_names, th, n_bins)
     return _eval_static(oof[mask], y[mask], sensitive[mask], group_names, th)
+'''
+
+
+def _fairness(oof, mask, y, groups, time_arr, sensitive, group_names, th, n_bins, is_dyn):
+    if group_names is None or mask.sum() == 0:
+        return np.nan, np.nan, np.nan
+    if is_dyn:
+        return _eval_dynamic(oof[mask], y[mask], groups[mask], time_arr[mask],
+                             sensitive[mask], group_names, th, n_bins)
+    return _eval_static(oof[mask], y[mask], sensitive[mask], group_names, th)
+
 
 
   # Main run: run cross_validation and perform grid_search if flag=True

@@ -143,18 +143,19 @@ def equalized_odds_loss_dynamic(
         return (eo_stack * (w / w.sum())).sum()
 
     if mode == "trend_aware":
-        if len(eo_stack) >= 2:
-            d_fpr = torch.relu(fpr_stack[1:] - fpr_stack[:-1])
-            d_fnr = torch.relu(fnr_stack[1:] - fnr_stack[:-1])
-            trend_loss = (d_fpr + d_fnr).mean()
-        else:
-            trend_loss = torch.tensor(0.0, device=device)
+        # servono almeno 2 landmark per calcolare un trend
+        if fpr_stack.shape[0] < 2:
+            return torch.tensor(0.0, device=device)
 
+        # fpr_stack/fnr_stack sono già |gap|, calcolati sopra (righe eo_stack)
+        base_fpr = fpr_stack[1:]          # k=2..K
+        base_fnr = fnr_stack[1:]
 
-        gap_w    = eo_stack.detach() + eps
-        gap_w    = gap_w / gap_w.sum()
-        loss_gap = (eo_stack * gap_w).sum()
+        # bonus di crescita rispetto al landmark precedente
+        growth_fpr = torch.clamp(fpr_stack[1:] - fpr_stack[:-1], min=0)
+        growth_fnr = torch.clamp(fnr_stack[1:] - fnr_stack[:-1], min=0)
 
-        return (1 - trend_weight) * loss_gap + trend_weight * trend_loss
+        eo_trend = (base_fpr + 5 * growth_fpr + base_fnr + 5 * growth_fnr).mean()
+        return eo_trend
 
     raise ValueError(f"mode={mode} non riconosciuto")
