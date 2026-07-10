@@ -171,8 +171,7 @@ def encode_first_time_homebuyer(df):
 
 # Outlier capping
 def cap_outliers(df, lower=0.01, upper=0.99):
-    # Escludi colonne già gestite da replace_invalid_ranges
-    already_bounded = set(VALID_RANGES.keys()) | set(VALID_VALUES.keys())
+    already_bounded = set(VALID_RANGES.keys()) | set(VALID_VALUES.keys()) | {"loan_age"}
     cols_to_cap = [c for c in NUMERIC_COLS if c not in already_bounded]
     
     for col in cols_to_cap:

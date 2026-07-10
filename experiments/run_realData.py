@@ -59,6 +59,7 @@ torch.manual_seed(SEED)
 torch.cuda.manual_seed(SEED)
 torch.backends.cudnn.deterministic = True
 
+
 # From hazard per_bin to PD(L, L+horizon)
 def collapse_to_pdh(oof_hazard, event_bin, ids, lmk_vals, n_bins,
                      complete_only=True):

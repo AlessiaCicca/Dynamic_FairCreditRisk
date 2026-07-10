@@ -23,7 +23,12 @@ def build_static(
 ):
 
     # Take first observation per subject 
-    static_df = ( df.sort_values(time_col).groupby(id_col).first().reset_index())
+    static_df = (
+    df.sort_values(time_col)
+      .groupby(id_col, as_index=False)
+      .nth(0)
+    )
+
 
     # Target
     static_df["target_static"] = (static_df[first_event_col].notna() & (static_df[first_event_col] <= horizon)).astype(np.int8)
