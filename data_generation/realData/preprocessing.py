@@ -253,11 +253,11 @@ def encode_demographics(df):
     def race_map(x):
         if not isinstance(x, str): return np.nan
         x = x.strip().lower()
-        if x in ["white", "asian"]: return 0
+        if x in ["white", "asian","joint"]: return 0
         if x in ["black or african american",
                   "american indian or alaska native",
                   "native hawaiian or other pacific islander",
-                  "2 or more races", "other"]: return 1
+                  "2 or more minority races", "other"]: return 1
         return np.nan
 
     df["race_bin"] = df["derived_race"].apply(race_map)
