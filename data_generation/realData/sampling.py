@@ -7,7 +7,7 @@ import argparse
 import gc
 import os
 import sys
-sys.path.append("/content/DynamicSurvival_FairCreditScoring")
+sys.path.append("/content/Dynamic_FairCreditRisk")
 
 from config import (SAMPLING, RACE_MINORITY, TVC_COLS,STATIC_COLS)
 

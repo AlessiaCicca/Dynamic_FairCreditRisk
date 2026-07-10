@@ -198,6 +198,7 @@ def save_panel(panel, matched, output_path):
                  "modifications_flag", "zero_balance_code",
                  "zero_balance_effective_date",
                  "delinquency_due_to_disaster", "borrower_assistance_status"]
+    target_cols=[]
     origination_cols = [c for c in matched.columns
                         if c != "loan_sequence_number"
                         and c not in set(id_cols + perf_cols + target_cols)]
