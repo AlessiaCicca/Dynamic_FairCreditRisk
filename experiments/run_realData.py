@@ -53,6 +53,7 @@ from src.evaluation.fairness_plots import (
 )
 
 
+
 # Reproducibility
 np.random.seed(SEED)
 torch.manual_seed(SEED)
@@ -84,7 +85,7 @@ def collapse_to_pdh(oof_hazard, event_bin, ids, lmk_vals, n_bins,
     out  = pd.concat([pdh, yh, cnt], axis=1).reset_index()
     # Require all bins                   
     if complete_only:   
-        out = out[out["n"] == n_bins]
+        out = out[(out["n"] == n_bins) | (out["yh"] == 1)]
     return out
 
 
@@ -450,6 +451,7 @@ def main():
         n_bins     = n_bins,
         complete_only = True,
     )
+     
 
 
     

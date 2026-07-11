@@ -143,7 +143,8 @@ def equalized_odds_loss_dynamic(
         growth_fpr = torch.clamp(fpr_stack[1:] - fpr_stack[:-1], min=0)
         growth_fnr = torch.clamp(fnr_stack[1:] - fnr_stack[:-1], min=0)
        
-        alpha_stack = torch.stack([g["alpha"] for g in gaps])
+        #alpha_stack = torch.stack([g["alpha"] for g in gaps])
+        alpha_stack = torch.tensor([g["alpha"] for g in gaps], device=device, dtype=base_fpr.dtype)             
         a_k = alpha_stack[1:]             
 
         eo_trend = (a_k * (base_fpr + 5 * growth_fpr + base_fnr + 5 * growth_fnr)).mean()
