@@ -1,15 +1,9 @@
 import torch
 
 
-def alpha_schedule(epoch, time_val, max_epoch=200, warmup=20,
-                   t_min=0, t_max=48, mode="u_shaped"):
-    # Null penalty in firsts epochs
-    if epoch < warmup:
-        f = 0.0                        
-    else:
-        f = min(1.0, (epoch - warmup) / (max_epoch - warmup))
+def alpha_schedule(time_val, t_min=0, t_max=48, mode="u_shaped"):
 
-    t_norm = (time_val - t_min) / (t_max - t_min + 1e-9)   # 0 = primo landmark, 1 = ultimo
+    t_norm = (time_val - t_min) / (t_max - t_min + 1e-9)
     if mode == "decay":
         g = 10.0 - 9.0 * t_norm                   
     elif mode == "growth":
@@ -17,13 +11,13 @@ def alpha_schedule(epoch, time_val, max_epoch=200, warmup=20,
     elif mode == "flat":
         g = 1.0                               
     elif mode == "u_shaped":
-        g = 0.5 + 0.5 * abs(2 * t_norm - 1)    
+        g = 1.0 + 9.0 * abs(2 * t_norm - 1)    
     elif mode == "n_shaped":
         g = 1.0 + 9.0 * (1 - abs(2 * t_norm - 1)) 
     else:
         raise ValueError(mode)
 
-    return f * g 
+    return g 
 
 
 def _per_landmark_gaps(pred, sens, true, time_use, already_prob,
@@ -73,9 +67,7 @@ def _per_landmark_gaps(pred, sens, true, time_use, already_prob,
         if not torch.isfinite(fpr_gap + fnr_gap):
             continue
 
-        a_t = alpha_schedule(epoch=current_epoch, time_val=t.item(),
-                             mode=time_schedule_mode,
-                             t_min=t_min, t_max=t_max)
+        a_t = alpha_schedule(time_val=t.item(), t_min=t_min, t_max=t_max,mode=time_schedule_mode,)
         gaps.append({
             "fpr": fpr_gap, "fnr": fnr_gap,
             "alpha": a_t, "n": mask.sum().float(),
@@ -130,7 +122,6 @@ def equalized_odds_loss_dynamic(
     if len(gaps) == 0:
         return torch.tensor(0.0, device=device)            
 
-    # stack dei gap e del termine EO pesato (a_t * (|fpr|+|fnr|))
     fpr_stack = torch.stack([g["fpr"] for g in gaps])
     fnr_stack = torch.stack([g["fnr"] for g in gaps])
     eo_stack  = torch.stack([g["alpha"] * (g["fpr"] + g["fnr"]) for g in gaps])
@@ -143,19 +134,19 @@ def equalized_odds_loss_dynamic(
         return (eo_stack * (w / w.sum())).sum()
 
     if mode == "trend_aware":
-        # servono almeno 2 landmark per calcolare un trend
         if fpr_stack.shape[0] < 2:
             return torch.tensor(0.0, device=device)
 
-        # fpr_stack/fnr_stack sono già |gap|, calcolati sopra (righe eo_stack)
-        base_fpr = fpr_stack[1:]          # k=2..K
+        base_fpr = fpr_stack[1:]          
         base_fnr = fnr_stack[1:]
 
-        # bonus di crescita rispetto al landmark precedente
         growth_fpr = torch.clamp(fpr_stack[1:] - fpr_stack[:-1], min=0)
         growth_fnr = torch.clamp(fnr_stack[1:] - fnr_stack[:-1], min=0)
+       
+        alpha_stack = torch.stack([g["alpha"] for g in gaps])
+        a_k = alpha_stack[1:]             
 
-        eo_trend = (base_fpr + 5 * growth_fpr + base_fnr + 5 * growth_fnr).mean()
+        eo_trend = (a_k * (base_fpr + 5 * growth_fpr + base_fnr + 5 * growth_fnr)).mean()
         return eo_trend
 
-    raise ValueError(f"mode={mode} non riconosciuto")
+    raise ValueError(f"mode={mode} unknown")
