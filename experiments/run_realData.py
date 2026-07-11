@@ -42,6 +42,7 @@ from config import (
 )
 from src.data.build_static        import build_static
 from src.data.build_dynamic       import build_dynamic
+from src.training.run_train      import _collapse_fold_full_horizon
 from src.training.run_train import run_cv, build_summary_table, find_best_threshold,run_grid_search, plot_tradeoff,make_splits
 from src.evaluation.fairness_metrics import (
     fairness_metrics, filter_sensitive, res_to_row,
@@ -53,13 +54,11 @@ from src.evaluation.fairness_plots import (
 )
 
 
-
 # Reproducibility
 np.random.seed(SEED)
 torch.manual_seed(SEED)
 torch.cuda.manual_seed(SEED)
 torch.backends.cudnn.deterministic = True
-
 
 # From hazard per_bin to PD(L, L+horizon)
 def collapse_to_pdh(oof_hazard, event_bin, ids, lmk_vals, n_bins,
@@ -83,8 +82,8 @@ def collapse_to_pdh(oof_hazard, event_bin, ids, lmk_vals, n_bins,
     # Number of bin for (id, L)
     cnt  = g.size().rename("n")
     out  = pd.concat([pdh, yh, cnt], axis=1).reset_index()
-    # Require all bins                   
-    if complete_only:   
+    # Require all bins OR default
+    if complete_only:
         out = out[(out["n"] == n_bins) | (out["yh"] == 1)]
     return out
 
@@ -437,21 +436,28 @@ def main():
     model_name="dynamic", n_splits=cfg["n_folds"],
     landmarks=cfg["landmarks"], collapse_pdh=True, n_bins=n_bins,
     group_names=GROUP_NAMES[args.fair_attr], 
-    splits=splits_d,                            
+    splits=splits_d,
+    bin_times=dynamic_data["bin_time_vals"],
+    feat_names=dynamic_data["feature_names"],
+    delta=cfg.get("delta", 4),
+    device=DEVICE,
     **train_kwargs,
     )
     mask_d = res_dynamic["is_test"]
     mask_s = res_static["is_test"]
 
-    pdh_df = collapse_to_pdh(
-        oof_hazard = res_dynamic["oof_preds"][mask_d], # hazard per bin
-        event_bin  = dynamic_data["y"][mask_d], # Event per bin 
-        ids        = dynamic_data["groups"][mask_d], # Subject indication
-        lmk_vals   = dynamic_data["lmk_vals"][mask_d], # Landamrk indication
-        n_bins     = n_bins,
-        complete_only = True,
-    )
-     
+    # PD-H full-horizon (Tanner et al. 2021)
+    pdh_df = pd.concat([
+        _collapse_fold_full_horizon(
+            model_k, scaler_k,
+            dynamic_data["X"], dynamic_data["y"], dynamic_data["groups"],
+            dynamic_data["lmk_vals"], dynamic_data["bin_time_vals"],
+            dynamic_data["feature_names"],
+            test_idx, n_bins, cfg.get("delta", 4), DEVICE,
+        )
+        for (model_k, scaler_k), (_, _, test_idx)
+        in zip(res_dynamic["fold_models"], splits_d)
+    ], ignore_index=True)
 
 
     
@@ -592,7 +598,10 @@ def main():
             n_bins=cfg["horizon"] // cfg.get("delta", 4),
             splits_static=splits_s,
             splits_dynamic=splits_d, 
-            out_dir=out_dir, run_tag=run_tag,
+            out_dir=out_dir, bin_times=dynamic_data["bin_time_vals"],
+            feat_names=dynamic_data["feature_names"],
+            delta=cfg.get("delta", 4), device=DEVICE,
+            run_tag=run_tag,
         )
         plot_tradeoff(df_grid, out_dir=out_dir, run_tag=run_tag)
         if cfg["use_wandb"]:

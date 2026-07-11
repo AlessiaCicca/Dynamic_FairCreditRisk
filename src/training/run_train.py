@@ -69,19 +69,91 @@ def _collapse_fold(hazard, event_bin, ids, lmk, n_bins, complete_only=True):
         "yh":  g["ev"].max(),
         "n":   g.size(),
     }).reset_index()
-    # require all bins present for the (subject, landmark)
+    # Require all bins OR default
     if complete_only:
-        out = out[out["n"] == n_bins]
+        out = out[(out["n"] == n_bins) | (out["yh"] == 1)]
     return out
 
-#   AUC, Brier score, F1 for single fold
+
+
+# Tanner-style PD-H (Tanner et al. 2021, JRSS-A -- createPredictData + cumprod).
+#
+# Il person-period dataset di TRAINING contiene solo i bin realmente vissuti dal
+# soggetto: i bin successivi all'evento sono scartati, perche' il soggetto e'
+# uscito dal risk set e non c'e' nulla da imparare (questo lo fa _collapse_fold /
+# build_dynamic, ed e' corretto).
+#
+# Ma in PREDIZIONE il modello va interrogato su una griglia sintetica COMPLETA di
+# tutti gli n_bins dell'orizzonte: e' una domanda puramente predittiva ("dato lo
+# stato a L, che hazard assegni a ciascuno dei bin futuri?"), che NON dipende da
+# cosa sia poi successo. Il prodotto di sopravvivenza e' quindi sempre su n_bins
+# termini, per ogni soggetto.
+#
+# Senza questo, un default precoce (pochi bin osservati) ottiene un prodotto su
+# meno fattori -> PD-H sistematicamente piu' basso -> AUC e soglia collassano.
+def _collapse_fold_full_horizon(model, scaler, X, y, groups, lmk, bin_times,
+                                 feat_names, idx, n_bins, delta, device,
+                                 complete_only=True):
+    import torch
+
+    spl_idx = [i for i, f in enumerate(feat_names) if str(f).startswith("spl_")]
+    if not spl_idx:
+        raise ValueError("No'spl_*' in feature_names")
+
+    d = pd.DataFrame({
+        "row": idx,
+        "id":  groups[idx],
+        "L":   lmk[idx],
+        "ev":  y[idx],
+    })
+    g   = d.groupby(["id", "L"], sort=False)
+    out = pd.DataFrame({
+        "yh":  g["ev"].max(),
+        "n":   g.size(),
+        "row": g["row"].first(),
+    }).reset_index()
+
+    if complete_only:
+        out = out[(out["n"] == n_bins) | (out["yh"] == 1)].reset_index(drop=True)
+    if len(out) == 0:
+        return out.assign(pdh=[])
+
+    n_groups = len(out)
+    X_rep  = X[out["row"].to_numpy()]
+    X_full = np.repeat(X_rep, n_bins, axis=0)
+
+    bt_to_spl = {}
+    for bt_val in np.unique(bin_times):
+        j = np.where(bin_times == bt_val)[0][0]
+        bt_to_spl[bt_val] = X[j, spl_idx]
+
+    L_rep     = np.repeat(out["L"].to_numpy(), n_bins)
+    j_rep     = np.tile(np.arange(n_bins), n_groups)
+    bt_target = L_rep + delta * j_rep
+    for k, bt_val in enumerate(bt_target):
+        if bt_val in bt_to_spl:
+            X_full[k, spl_idx] = bt_to_spl[bt_val]
+
+    Xs = scaler.transform(X_full).astype(np.float32)
+    Xs = np.nan_to_num(Xs, nan=0., posinf=5., neginf=-5.)
+    model.eval()
+    with torch.no_grad():
+        h = torch.sigmoid(model(torch.tensor(Xs, device=device))).cpu().numpy()
+    h = np.clip(h, 1e-7, 1 - 1e-7)
+
+    surv = np.prod(1.0 - h.reshape(n_groups, n_bins), axis=1)
+    out["pdh"] = 1.0 - surv
+    return out[["id", "L", "pdh", "yh", "n"]]
+
+
+#   AUC, Brier score for single fold (F1 is not reported as a metric -- it is only
+#   used internally by find_best_threshold to pick the operating threshold)
 def metrics_all(y_true, p, threshold=0.5):
     p = np.clip(p, 0, 1)
     auc = roc_auc_score(y_true, p) if len(np.unique(y_true)) > 1 else np.nan
     return dict(
         AUC=auc,
         Brier=brier_score_loss(y_true, p),
-        F1=f1_score(y_true, (p >= threshold).astype(int), zero_division=0),
         Th=threshold,
     )
 
@@ -94,71 +166,6 @@ def agg_mean_sd(list_of_dicts):
         out[f"{k}_SD"] = float(np.nanstd(vals))
     return out
 
-
-'''
-# AUC and separation on the static (aggregate) predictions
-def _eval_static(preds, y, sens, group_names, eval_th):
-    yt_f, yp_f, sn_f = filter_sensitive(np.asarray(y).astype(int), preds, sens)
-    if len(np.unique(yt_f)) < 2 or len(np.unique(sn_f)) < 2:
-        return np.nan, np.nan, np.nan
-    auc = roc_auc_score(yt_f, yp_f)
-    yb_f = (yp_f >= eval_th).astype(int)
-    res = fairness_metrics(yt_f, yp_f, yb_f, sn_f, group_names, threshold=eval_th)
-    s = res.get("axioms", {}).get("separation", np.nan)
-    return auc, s, s
-
-#  Collapse per-bin hazards to PD-H, then compute AUC and the separation curve
-#   over landmarks; the fairness AUC is the area under that curve (normalized time).
-def _eval_dynamic(preds, y, ids, time, sens, group_names, eval_th, n_bins):
-
-    coll = _collapse_fold(preds, y, ids, time, n_bins).reset_index(drop=True)
-
-    # one sensitive value per subject
-    sens_by_id = pd.Series(sens, index=ids)
-    sens_by_id = sens_by_id[~sens_by_id.index.duplicated(keep="first")]
-    coll["sens"] = coll["id"].map(sens_by_id)
-
-    eval_preds = coll["pdh"].to_numpy()
-    eval_y = coll["yh"].to_numpy().astype(int)
-    eval_sens = coll["sens"].to_numpy()
-    eval_time = coll["L"].to_numpy()
-
-    auc = roc_auc_score(eval_y, eval_preds) if len(np.unique(eval_y)) > 1 else np.nan
-
-    # separation per landmark
-    time_rows = []
-    for t in sorted(np.unique(eval_time)):
-        mask = eval_time == t
-        yt_f, yp_f, sn_f = filter_sensitive(eval_y[mask], eval_preds[mask], eval_sens[mask])
-        if len(np.unique(yt_f)) < 2 or len(np.unique(sn_f)) < 2:
-            continue
-        # skip landmarks with too few samples in the smallest group
-        if pd.Series(sn_f).value_counts().min() < 50:
-            continue
-        yb_f = (yp_f >= eval_th).astype(int)
-        res = fairness_metrics(yt_f, yp_f, yb_f, sn_f, group_names, threshold=eval_th)
-        time_rows.append({"t": t, "separation": res.get("axioms", {}).get("separation", np.nan)})
-
-    df_t = pd.DataFrame(time_rows)
-
-    # integrate the separation curve over normalized time (area under the curve)
-    def trapz_norm(col):
-        if df_t.empty or col not in df_t.columns:
-            return np.nan
-        sub = df_t.dropna(subset=[col])
-        if len(sub) < 3:
-            return np.nan
-        t_v = sub["t"].to_numpy(float)
-        v = sub[col].to_numpy(float)
-        t_n = (t_v - t_v.min()) / (t_v.max() - t_v.min() + 1e-9)
-        return float(np.trapezoid(v, t_n))
-
-    sep_auc = trapz_norm("separation")
-    sep_mean = (df_t["separation"].mean()
-                if (not df_t.empty and "separation" in df_t.columns) else np.nan)
-    return auc, sep_auc, sep_mean
-
-'''
 
 # AUC and separation on the static (aggregate) predictions
 def _eval_static(preds, y, sens, group_names, eval_th):
@@ -188,35 +195,46 @@ def _integrate_curve(df_t, col, t_min=0.0, t_max=None):
     return float(area / (t_max - t_min))
 
 
-def _eval_dynamic(preds, y, ids, time, sens, group_names, eval_th, n_bins):
-    coll = _collapse_fold(preds, y, ids, time, n_bins).reset_index(drop=True)
+# Per-landmark AUC / Brier, used to build the integrated (time-normalized)
+# performance curves for the dynamic model. Replaces the old pooled
+# (person-period aggregate) performance computation. F1 is intentionally not
+# reported here -- it is only used internally (via find_best_threshold) to
+# pick the operating threshold `th`, which is still needed for fairness
+# (separation) but is no longer surfaced as a performance metric.
+def _perf_by_landmark(y_true, preds, time_vals):
+    rows = []
+    for t in sorted(np.unique(time_vals)):
+        mask = time_vals == t
+        if mask.sum() == 0:
+            continue
+        yt_t, yp_t = y_true[mask], preds[mask]
+        auc_t = roc_auc_score(yt_t, yp_t) if len(np.unique(yt_t)) > 1 else np.nan
+        brier_t = brier_score_loss(yt_t, yp_t)
+        rows.append({"t": t, "auc": auc_t, "brier": brier_t})
+    return pd.DataFrame(rows)
 
-    sens_by_id = pd.Series(sens, index=ids)
-    sens_by_id = sens_by_id[~sens_by_id.index.duplicated(keep="first")]
+
+def _eval_dynamic_from_pdh(coll, sens_by_id, group_names, eval_th):
+    """
+    coll: DataFrame con (id, L, pdh, yh, n) gia' calcolato con il full-horizon
+          PD-H (_collapse_fold_full_horizon), col modello del fold corretto.
+    """
+    coll = coll.reset_index(drop=True).copy()
     coll["sens"] = coll["id"].map(sens_by_id)
 
     eval_preds = coll["pdh"].to_numpy()
-    eval_y = coll["yh"].to_numpy().astype(int)
-    eval_sens = coll["sens"].to_numpy()
-    eval_time = coll["L"].to_numpy()
+    eval_y     = coll["yh"].to_numpy().astype(int)
+    eval_sens  = coll["sens"].to_numpy()
+    eval_time  = coll["L"].to_numpy()
 
-    # pooled (original)
-    auc_pooled = roc_auc_score(eval_y, eval_preds) if len(np.unique(eval_y)) > 1 else np.nan
-    brier_pooled = brier_score_loss(eval_y, eval_preds)
-    f1_pooled = f1_score(eval_y, (eval_preds >= eval_th).astype(int), zero_division=0)
+    df_perf          = _perf_by_landmark(eval_y, eval_preds, eval_time)
+    auc_integrated   = _integrate_curve(df_perf, "auc")
+    brier_integrated = _integrate_curve(df_perf, "brier")
 
-    # per-landmark
-    perf_rows, time_rows = [], []
+    time_rows = []
     for t in sorted(np.unique(eval_time)):
         mask = eval_time == t
-        yt_t, yp_t = eval_y[mask], eval_preds[mask]
-
-        auc_t = roc_auc_score(yt_t, yp_t) if len(np.unique(yt_t)) > 1 else np.nan
-        brier_t = brier_score_loss(yt_t, yp_t) if mask.sum() > 0 else np.nan
-        f1_t = f1_score(yt_t, (yp_t >= eval_th).astype(int), zero_division=0) if mask.sum() > 0 else np.nan
-        perf_rows.append({"t": t, "auc": auc_t, "brier": brier_t, "f1": f1_t})
-
-        yt_f, yp_f, sn_f = filter_sensitive(yt_t, yp_t, eval_sens[mask])
+        yt_f, yp_f, sn_f = filter_sensitive(eval_y[mask], eval_preds[mask], eval_sens[mask])
         if len(np.unique(yt_f)) < 2 or len(np.unique(sn_f)) < 2:
             continue
         if pd.Series(sn_f).value_counts().min() < 50:
@@ -225,40 +243,27 @@ def _eval_dynamic(preds, y, ids, time, sens, group_names, eval_th, n_bins):
         res = fairness_metrics(yt_f, yp_f, yb_f, sn_f, group_names, threshold=eval_th)
         time_rows.append({"t": t, "separation": res.get("axioms", {}).get("separation", np.nan)})
 
-    df_perf = pd.DataFrame(perf_rows)
-    df_t = pd.DataFrame(time_rows)
+    df_t     = pd.DataFrame(time_rows)
+    sep_auc  = _integrate_curve(df_t, "separation")
+    sep_mean = (df_t["separation"].mean()
+                if (not df_t.empty and "separation" in df_t.columns) else np.nan)
 
-    auc_integrated = _integrate_curve(df_perf, "auc")
-    brier_integrated = _integrate_curve(df_perf, "brier")
-    f1_integrated = _integrate_curve(df_perf, "f1")
-    sep_auc = _integrate_curve(df_t, "separation")
-    sep_mean = df_t["separation"].mean() if (not df_t.empty and "separation" in df_t.columns) else np.nan
-
-    print(f"    [pooled]     AUC={auc_pooled:.4f}  Brier={brier_pooled:.4f}  F1={f1_pooled:.4f}")
-    print(f"    [integrated] AUC={auc_integrated:.4f}  Brier(IBS)={brier_integrated:.4f}  F1={f1_integrated:.4f}")
-
-    # SAME 3-element tuple shape as before: (auc, sep_auc, sep_mean),
-    # with pooled/integrated extras attached as attributes on a plain tuple subclass
-    # so nothing downstream that does auc, sep_auc, sep_mean = _eval_dynamic(...) breaks.
     class _Result(tuple):
         pass
-
-    result = _Result((auc_pooled, sep_auc, sep_mean))
-    result.auc_pooled = auc_pooled
-    result.auc_integrated = auc_integrated
-    result.brier_pooled = brier_pooled
+    result = _Result((auc_integrated, sep_auc, sep_mean))
     result.brier_integrated = brier_integrated
-    result.f1_pooled = f1_pooled
-    result.f1_integrated = f1_integrated
     result.df_perf = df_perf
     return result
+
 
 # Main function of the file
 # For each pre-computed (train, val, test) fold: fit on train, pick the threshold
 # on train, and store predictions into val / test
 def _fit_predict(splits, X, y, groups, sensitive,
                  time_arr, subj_ids, model_name,
-                 alpha, beta, n_bins, collapse_pdh,  verbose_folds=False, **train_kwargs):
+                 alpha, beta, n_bins, collapse_pdh,  verbose_folds=False,
+                 bin_times=None, feat_names=None, delta=None, device="cpu",
+                 **train_kwargs):
 
     is_dyn = time_arr is not None
     oof_val = np.zeros(len(y), dtype=np.float64)
@@ -269,6 +274,8 @@ def _fit_predict(splits, X, y, groups, sensitive,
 
     thresholds = []
     model_last = scaler_last = None
+    fold_models = []   # (model, scaler) per fold -- serve per la predizione
+                       # full-horizon, che va fatta col modello DEL PROPRIO fold
     for fold, (tr_idx, val_idx, test_idx) in enumerate(splits):
         te_idx = np.concatenate([val_idx, test_idx])
 
@@ -290,70 +297,111 @@ def _fit_predict(splits, X, y, groups, sensitive,
         is_val[val_idx] = True
         is_test[test_idx] = True
 
-        # threshold on train
+        # threshold on train (full-horizon PD-H, col modello di QUESTO fold)
         if collapse_pdh:
-            tr_pdh = _collapse_fold(p_tr, y[tr_idx], groups[tr_idx], time_arr[tr_idx], n_bins)
+            tr_pdh = _collapse_fold_full_horizon(
+                model, scaler, X, y, groups, time_arr, bin_times, feat_names,
+                tr_idx, n_bins, delta, device)
             thresholds.append(find_best_threshold(tr_pdh["yh"], tr_pdh["pdh"]))
         else:
             thresholds.append(find_best_threshold(y[tr_idx], p_tr))
 
+        fold_models.append((model, scaler))
         model_last, scaler_last = model, scaler
 
         if verbose_folds:
             if collapse_pdh:
-                te_pdh = _collapse_fold(p_te, y[te_idx], groups[te_idx],
-                                        time_arr[te_idx], n_bins)
-                auc_fold = (roc_auc_score(te_pdh["yh"].astype(int), te_pdh["pdh"])
-                            if te_pdh["yh"].nunique() > 1 else float("nan"))
+                val_pdh = _collapse_fold_full_horizon(
+                    model, scaler, X, y, groups, time_arr, bin_times, feat_names,
+                    val_idx, n_bins, delta, device)
+                df_perf_fold = _perf_by_landmark(val_pdh["yh"].to_numpy().astype(int),
+                                                 val_pdh["pdh"].to_numpy(),
+                                                 val_pdh["L"].to_numpy())
+                auc_fold = _integrate_curve(df_perf_fold, "auc")
+                pm = val_pdh["pdh"].mean()
             else:
-                auc_fold = (roc_auc_score(y[te_idx], p_te)
-                            if len(np.unique(y[te_idx])) > 1 else float("nan"))
-            print(f"  Fold {fold + 1}  |  pred_mean_test={p_te.mean():.4f}"
-                  f"  |  AUC: {auc_fold:.4f}  |  th={thresholds[-1]:.5f}")
+                val_pos  = [pos[i] for i in val_idx]
+                p_val    = p_te[val_pos]
+                auc_fold = (roc_auc_score(y[val_idx], p_val)
+                            if len(np.unique(y[val_idx])) > 1 else float("nan"))
+                pm = p_val.mean()
+            print(f"  Fold {fold + 1}  |  pred_mean_val={pm:.4f}"
+                  f"  |  AUC (val): {auc_fold:.4f}  |  th={thresholds[-1]:.5f}")
 
     return dict(
         oof_val=oof_val, oof_test=oof_test, oof_full=oof_full,
         is_val=is_val, is_test=is_test,
         threshold=float(np.mean(thresholds)),
         model_last=model_last, scaler_last=scaler_last,
+        fold_models=fold_models,
     )
-'''
-# Select predictions is_val or is_test
-def _fairness(oof, mask, y, groups, time_arr, sensitive, group_names, th, n_bins, is_dyn):
-    if group_names is None or mask.sum() == 0:
-        return np.nan, np.nan, np.nan
-    if is_dyn:
-        return _eval_dynamic(oof[mask], y[mask], groups[mask], time_arr[mask],
-                             sensitive[mask], group_names, th, n_bins)
-    return _eval_static(oof[mask], y[mask], sensitive[mask], group_names, th)
-'''
 
 
-def _fairness(oof, mask, y, groups, time_arr, sensitive, group_names, th, n_bins, is_dyn):
-    if group_names is None or mask.sum() == 0:
-        return np.nan, np.nan, np.nan
-    if is_dyn:
-        return _eval_dynamic(oof[mask], y[mask], groups[mask], time_arr[mask],
-                             sensitive[mask], group_names, th, n_bins)
-    return _eval_static(oof[mask], y[mask], sensitive[mask], group_names, th)
+# Valutazione PER FOLD: ogni fold usa il PROPRIO modello per predire il proprio
+# split (val o test). Usare un unico modello (es. l'ultimo fold) su tutti gli
+# split sarebbe leakage: 4 fold su 5 avrebbero visto quei soggetti in training.
+def _fairness_per_fold(fp, splits, which, X, y, groups, time_arr, sensitive,
+                       group_names, th, n_bins, is_dyn,
+                       bin_times=None, feat_names=None, delta=None, device="cpu"):
+    if group_names is None:
+        return (np.nan, np.nan, np.nan)
 
+    if not is_dyn:
+        oof  = fp["oof_val"] if which == "val" else fp["oof_test"]
+        mask = fp["is_val"]  if which == "val" else fp["is_test"]
+        if mask.sum() == 0:
+            return (np.nan, np.nan, np.nan)
+        return _eval_static(oof[mask], y[mask], sensitive[mask], group_names, th)
+
+    sens_by_id = pd.Series(sensitive, index=groups)
+    sens_by_id = sens_by_id[~sens_by_id.index.duplicated(keep="first")]
+
+    rows = []
+    for k, (tr_idx, val_idx, test_idx) in enumerate(splits):
+        idx = val_idx if which == "val" else test_idx
+        model, scaler = fp["fold_models"][k]
+        coll = _collapse_fold_full_horizon(
+            model, scaler, X, y, groups, time_arr, bin_times, feat_names,
+            idx, n_bins, delta, device)
+        if len(coll) == 0:
+            continue
+        rows.append(_eval_dynamic_from_pdh(coll, sens_by_id, group_names, th))
+
+    if not rows:
+        return (np.nan, np.nan, np.nan)
+    arr = np.asarray(rows, dtype=float)
+    return tuple(np.nanmean(arr, axis=0))
 
 
   # Main run: run cross_validation and perform grid_search if flag=True
 def run(X, y, groups, sensitive, splits, group_names,
         time_arr=None, subj_ids=None, model_name="",
         n_bins=None, collapse_pdh=False, is_dynamic=False,
-        grid_search=False, coefs=None, verbose_folds=False,  **train_kwargs):
+        grid_search=False, coefs=None, verbose_folds=False,
+        bin_times=None, feat_names=None, delta=None, device="cpu",
+        **train_kwargs):
 
     # for a combination of alpha and beta and call _fit_predict for training 
     def _one(alpha, beta):
         fp = _fit_predict(splits, X, y, groups, sensitive, time_arr, subj_ids,
-                          model_name, alpha, beta, n_bins, collapse_pdh,  verbose_folds=verbose_folds,**train_kwargs)
+                          model_name, alpha, beta, n_bins, collapse_pdh,
+                          verbose_folds=verbose_folds,
+                          bin_times=bin_times, feat_names=feat_names,
+                          delta=delta, device=device, **train_kwargs)
         th = fp["threshold"]
-        val = _fairness(fp["oof_val"], fp["is_val"], y, groups, time_arr,
-                        sensitive, group_names, th, n_bins, is_dynamic)
-        test = _fairness(fp["oof_test"], fp["is_test"], y, groups, time_arr,
-                         sensitive, group_names, th, n_bins, is_dynamic)
+
+        # Valutazione PER FOLD (non pooled): ogni fold predice il proprio split
+        # col PROPRIO modello -- usare un unico modello su tutti gli split
+        # sarebbe leakage (4 fold su 5 avrebbero visto quei soggetti in training).
+        # Le metriche sono poi mediate tra fold, stessa metodologia di
+        # cv_results.csv, cosi' selezione del coefficiente e report finale
+        # usano lo stesso criterio.
+        val  = _fairness_per_fold(fp, splits, "val",  X, y, groups, time_arr,
+                                  sensitive, group_names, th, n_bins, is_dynamic,
+                                  bin_times, feat_names, delta, device)
+        test = _fairness_per_fold(fp, splits, "test", X, y, groups, time_arr,
+                                  sensitive, group_names, th, n_bins, is_dynamic,
+                                  bin_times, feat_names, delta, device)
         fp["val"], fp["test"] = val, test
         return fp
 
@@ -368,6 +416,7 @@ def run(X, y, groups, sensitive, splits, group_names,
             oof_test=r["oof_test"], is_test=r["is_test"],
             oof_val=r["oof_val"], is_val=r["is_val"],
             threshold=r["threshold"],
+            fold_models=r["fold_models"],
             auc_test=auc_test, separation_auc_test=sep_auc_test, separation_mean_test=sep_mean_test,
             auc_val=auc_val, separation_auc_val=sep_auc_val, separation_mean_val=sep_mean_val,
             model_last=r["model_last"], scaler_last=r["scaler_last"],
@@ -397,10 +446,12 @@ def run(X, y, groups, sensitive, splits, group_names,
         r = results_cache[c] if c in results_cache else _eval_coef(c)
 
         if fixed_th is not None:
-            val_fixed = _fairness(r["oof_val"], r["is_val"], y, groups, time_arr,
-                                  sensitive, group_names, fixed_th, n_bins, is_dynamic)
-            test_fixed = _fairness(r["oof_test"], r["is_test"], y, groups, time_arr,
-                                   sensitive, group_names, fixed_th, n_bins, is_dynamic)
+            val_fixed = _fairness_per_fold(r, splits, "val", X, y, groups, time_arr,
+                                           sensitive, group_names, fixed_th, n_bins,
+                                           is_dynamic, bin_times, feat_names, delta, device)
+            test_fixed = _fairness_per_fold(r, splits, "test", X, y, groups, time_arr,
+                                            sensitive, group_names, fixed_th, n_bins,
+                                            is_dynamic, bin_times, feat_names, delta, device)
         else:
             val_fixed = (np.nan, np.nan, np.nan)
             test_fixed = (np.nan, np.nan, np.nan)
@@ -436,7 +487,9 @@ def run_cv(X, y, groups, sensitive,
            model_name="", n_splits=5,
            landmarks=None, collapse_pdh=False, n_bins=None,
            group_names=None, splits=None,
-           val_size=0.5, split_seed=SEED, **train_kwargs):
+           val_size=0.5, split_seed=SEED,
+           bin_times=None, feat_names=None, delta=None, device="cpu",
+           **train_kwargs):
     
     if splits is None:
         splits = make_splits(y, groups, n_splits=n_splits, val_size=val_size, seed=split_seed)
@@ -444,16 +497,32 @@ def run_cv(X, y, groups, sensitive,
     r = run(X, y, groups, sensitive, splits, group_names,
             time_arr=time_arr, subj_ids=subj_ids, model_name=model_name,
             n_bins=n_bins, collapse_pdh=collapse_pdh,
-            is_dynamic=(time_arr is not None), grid_search=False,  verbose_folds=True,**train_kwargs)
+            is_dynamic=(time_arr is not None), grid_search=False, verbose_folds=True,
+            bin_times=bin_times, feat_names=feat_names, delta=delta, device=device,
+            **train_kwargs)
 
-    # per-fold performance metrics on the test portion only, for the summary table
+    # per-fold performance metrics on the test portion only, for the summary table.
+    # For the dynamic model (collapse_pdh=True) this now uses the INTEGRATED
+    # per-landmark AUC/Brier -- the pooled (person-period aggregate) version has
+    # been removed, consistent with _eval_dynamic. F1 is not reported for either
+    # model: the threshold is still chosen by maximizing F1 (find_best_threshold),
+    # but F1 itself is no longer surfaced as a metric.
     metrics_list = []
-    for tr_idx, val_idx, test_idx in splits:
+    for k, (tr_idx, val_idx, test_idx) in enumerate(splits):
         if collapse_pdh:
-            te_pdh = _collapse_fold(r["oof_test"][test_idx], y[test_idx],
-                                    groups[test_idx], time_arr[test_idx], n_bins)
-            metrics_list.append(metrics_all(te_pdh["yh"].astype(int),
-                                            te_pdh["pdh"], r["threshold"]))
+            # full-horizon PD-H col modello DI QUESTO fold (no leakage)
+            model_k, scaler_k = r["fold_models"][k]
+            te_pdh = _collapse_fold_full_horizon(
+                model_k, scaler_k, X, y, groups, time_arr, bin_times, feat_names,
+                test_idx, n_bins, delta, device)
+            df_perf = _perf_by_landmark(te_pdh["yh"].to_numpy().astype(int),
+                                        te_pdh["pdh"].to_numpy(),
+                                        te_pdh["L"].to_numpy())
+            metrics_list.append(dict(
+                AUC=_integrate_curve(df_perf, "auc"),
+                Brier=_integrate_curve(df_perf, "brier"),
+                Th=r["threshold"],
+            ))
         else:
             metrics_list.append(metrics_all(y[test_idx].astype(int),
                                             r["oof_test"][test_idx], r["threshold"]))
@@ -478,6 +547,7 @@ def run_grid_search(
     n_folds=5, eo_mode_d="mean", schedule_mode_d="flat",
     n_bins=None, val_size=0.5, split_seed=SEED,
     splits_static=None, splits_dynamic=None,
+    bin_times=None, feat_names=None, delta=None, device="cpu",
     out_dir=Path("outputs"), run_tag="run",
 ):
 
@@ -515,7 +585,8 @@ def run_grid_search(
                time_arr=lmk_vals, subj_ids=grp_dynamic, model_name="dynamic",
                n_bins=n_bins, collapse_pdh=True, is_dynamic=True,
                eo_mode_d=eo_mode_d, schedule_mode_d=schedule_mode_d,
-               grid_search=True, coefs=alphas)
+               grid_search=True, coefs=alphas,
+               bin_times=bin_times, feat_names=feat_names, delta=delta, device=device)
     df_d["model"] = "M_DYNAMIC"
     for _, row in df_d.iterrows():
         print(f"  alpha={row['coef']:.2f}  AUC(val)={row['auc_mean']:.4f}  "
@@ -529,13 +600,22 @@ def run_grid_search(
 
 
 def build_summary_table(cv_results):
+    # Underlying values are unchanged: AUC_Mean/Brier_Mean are ordinary AUC/Brier
+    # for M_STATIC, and the INTEGRATED per-landmark AUC/Brier for M_DYNAMIC
+    # (see run_cv). Only the displayed column labels are generalized here to
+    # make that distinction explicit without needing separate columns per model.
     rows = []
     for name, res in cv_results.items():
         row = res["summary"].copy()
         row["Model"] = name
         rows.append(row)
-    cols = ["Model", "AUC_Mean", "AUC_SD", "Brier_Mean", "Brier_SD", "F1_Mean", "F1_SD"]
     df = pd.DataFrame(rows)
+    rename_map = {
+        "AUC_Mean": "AUC/iAUC Mean", "AUC_SD": "AUC/iAUC SD",
+        "Brier_Mean": "BS/IBS Mean", "Brier_SD": "BS/IBS SD",
+    }
+    df = df.rename(columns=rename_map)
+    cols = ["Model", "AUC/iAUC Mean", "AUC/iAUC SD", "BS/IBS Mean", "BS/IBS SD"]
     return df[[c for c in cols if c in df.columns]]
 
 
