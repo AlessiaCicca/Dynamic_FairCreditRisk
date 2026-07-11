@@ -42,13 +42,15 @@ from config import (
 )
 from src.data.build_static        import build_static
 from src.data.build_dynamic       import build_dynamic
-from src.training.run_train      import _collapse_fold_full_horizon
-from src.training.run_train import run_cv, build_summary_table, find_best_threshold,run_grid_search, plot_tradeoff,make_splits
+from src.training.run_train import (
+    run_cv, build_summary_table, find_best_threshold, run_grid_search,
+    plot_tradeoff, make_splits,
+    _collapse_fold_full_horizon, _integrate_curve, _eval_dynamic_from_pdh,
+)
 from src.evaluation.fairness_metrics import (
     fairness_metrics, filter_sensitive, res_to_row,
     print_fairness_report, compute_adTPR_adFPR,
 )
-from src.evaluation.auc_fairness  import auc_fairness_all_models
 from src.evaluation.fairness_plots import (
     plot_separation_over_time, plot_auc_fairness_bar,
 )
@@ -82,7 +84,11 @@ def collapse_to_pdh(oof_hazard, event_bin, ids, lmk_vals, n_bins,
     # Number of bin for (id, L)
     cnt  = g.size().rename("n")
     out  = pd.concat([pdh, yh, cnt], axis=1).reset_index()
-    # Require all bins OR default
+    # Require all bins, TRANNE per i loan con evento già risolto: se yh==1,
+    # il loan è uscito dal rischio non appena è defaultato (n < n_bins per
+    # costruzione in build_dynamic), ma il suo esito è comunque completo e
+    # noto -> non va scartato come se fosse censoring. Scartiamo solo i
+    # gruppi incompleti E senza evento (vero censoring, storia mancante).
     if complete_only:
         out = out[(out["n"] == n_bins) | (out["yh"] == 1)]
     return out
@@ -205,11 +211,99 @@ def run_feature_importance(static_data, dynamic_data,
             import wandb
             wandb.log({f"feature_importance/{name}": wandb.Image(str(plot_path))})
 
+# SEP-AUC come MEDIA DEI FOLD, per l'attributo target.
+#   - M_DYNAMIC: per ogni fold, ricalcola il PD-H full-horizon sul proprio test
+#     (col modello di QUEL fold), costruisce la curva separation(L) e la integra.
+#     I 3/5 valori cosi' ottenuti vengono mediati.
+#   - M_STATIC : non ha dimensione temporale -> la "SEP-AUC" e' semplicemente la
+#     separation, calcolata per fold sul proprio test e poi mediata.
+def fairness_auc_per_fold(fair_attr, res_static, res_dynamic, splits_s, splits_d,
+                          static_data, dynamic_data, n_bins, delta,
+                          th_static, th_dynamic, group_names,
+                          sens_static_full, sens_dynamic_full):
+    """
+    Metriche di fairness come MEDIA (+ SD) DEI FOLD, sul test, per l'attributo
+    target. Coerente con cv_results.csv e col criterio della grid search.
+
+    Restituisce un DataFrame con una riga per modello:
+        Model | SEP-AUC Mean | SEP-AUC SD | adTPR | adFPR | n_folds
+
+    - M_DYNAMIC: per ogni fold ricalcola il PD-H full-horizon sul proprio test
+      (col modello di QUEL fold), costruisce la curva separation(L) e la integra.
+    - M_STATIC : non ha dimensione temporale -> la "SEP-AUC" e' semplicemente la
+      separation calcolata sul test di ciascun fold.
+    """
+    from src.evaluation.fairness_metrics import fairness_metrics, filter_sensitive
+
+    rows = []
+
+    # ---------------- M_STATIC ----------------
+    ys = static_data["y"]
+    sep_s, adtpr_s, adfpr_s = [], [], []
+    for (_, _, test_idx) in splits_s:
+        yt = ys[test_idx].astype(int)
+        yp = res_static["oof_test"][test_idx]
+        sn = sens_static_full[test_idx]
+        yt_f, yp_f, sn_f = filter_sensitive(yt, yp, sn)
+        if len(np.unique(yt_f)) < 2 or len(np.unique(sn_f)) < 2:
+            continue
+        yb_f = (yp_f >= th_static).astype(int)
+        res = fairness_metrics(yt_f, yp_f, yb_f, sn_f, group_names, threshold=th_static)
+        sep_s.append(res.get("axioms", {}).get("separation", np.nan))
+        ad = compute_adTPR_adFPR(yt_f, yb_f, sn_f, None)
+        adtpr_s.append(ad["adTPR"]); adfpr_s.append(ad["adFPR"])
+
+    rows.append({
+        "Model":        "M_STATIC",
+        "SEP-AUC Mean": float(np.nanmean(sep_s)) if sep_s else np.nan,
+        "SEP-AUC SD":   float(np.nanstd(sep_s))  if sep_s else np.nan,
+        "adTPR":        float(np.nanmean(adtpr_s)) if adtpr_s else np.nan,
+        "adFPR":        float(np.nanmean(adfpr_s)) if adfpr_s else np.nan,
+    })
+
+    # ---------------- M_DYNAMIC ----------------
+    X   = dynamic_data["X"];      y   = dynamic_data["y"]
+    grp = dynamic_data["groups"]; lmk = dynamic_data["lmk_vals"]
+    bt  = dynamic_data["bin_time_vals"]
+    fn  = dynamic_data["feature_names"]
+
+    sens_by_id = pd.Series(sens_dynamic_full, index=grp)
+    sens_by_id = sens_by_id[~sens_by_id.index.duplicated(keep="first")]
+
+    sep_d, adtpr_d, adfpr_d = [], [], []
+    for k, (_, _, test_idx) in enumerate(splits_d):
+        model_k, scaler_k = res_dynamic["fold_models"][k]
+        coll = _collapse_fold_full_horizon(
+            model_k, scaler_k, X, y, grp, lmk, bt, fn,
+            test_idx, n_bins, delta, DEVICE)
+        if len(coll) == 0:
+            continue
+        r = _eval_dynamic_from_pdh(coll, sens_by_id, group_names, th_dynamic)
+        sep_d.append(r[1])      # sep_auc
+        adtpr_d.append(r[3])    # adTPR
+        adfpr_d.append(r[4])    # adFPR
+
+    rows.append({
+        "Model":        "M_DYNAMIC",
+        "SEP-AUC Mean": float(np.nanmean(sep_d)) if sep_d else np.nan,
+        "SEP-AUC SD":   float(np.nanstd(sep_d))  if sep_d else np.nan,
+        "adTPR":        float(np.nanmean(adtpr_d)) if adtpr_d else np.nan,
+        "adFPR":        float(np.nanmean(adfpr_d)) if adfpr_d else np.nan,
+    })
+
+    return pd.DataFrame(rows)
+
+
 #  Fairness analysis 
 def run_fairness_analysis(
     y_static, static_oof, sens_by_attr_static,
     y_dynamic, dynamic_oof, sens_by_attr_dynamic, lmk_vals,
-    out_dir, cfg,  th_static, th_dynamic):
+    out_dir, cfg,  th_static, th_dynamic,
+    # per la SEP-AUC calcolata come MEDIA DEI FOLD (non pooled)
+    fair_attr=None, res_static=None, res_dynamic=None,
+    splits_s=None, splits_d=None,
+    static_data=None, dynamic_data=None, n_bins=None,
+    sens_static_full=None, sens_dynamic_full=None):
 
     attrs = ["SEX", "RACE", "AGE"]
 
@@ -218,6 +312,29 @@ def run_fairness_analysis(
 
     agg_rows = []
     dyn_rows = []
+
+     
+    # AUC fairness -- MEDIA DEI FOLD (non pooled), coerente con cv_results.csv
+    # e con il criterio di selezione della grid search. Calcolata solo per
+    # l'attributo target (--fair_attr), che e' quello su cui la penalty agisce.
+    #
+    # La media dei fold e' lo standard in CV (vedi anche FairCal, ICLR 2022, che
+    # riporta media +- SD dei fold anche per le metriche di fairness). Il pooling
+    # introdurrebbe un bias documentato (Airola et al. 2010, Parker et al. 2007).
+    df_auc = fairness_auc_per_fold(
+        fair_attr=fair_attr,
+        res_static=res_static, res_dynamic=res_dynamic,
+        splits_s=splits_s, splits_d=splits_d,
+        static_data=static_data, dynamic_data=dynamic_data,
+        n_bins=n_bins, delta=cfg.get("delta", 4),
+        th_static=th_static, th_dynamic=th_dynamic,
+        group_names=GROUP_NAMES[fair_attr],
+        sens_static_full=sens_static_full,
+        sens_dynamic_full=sens_dynamic_full,
+    )
+    df_auc.to_csv(out_dir / "auc_fairness_comparison.csv", index=False)
+    print(f"\n=== FAIRNESS — {fair_attr} (media dei fold, test) ===")
+    print(df_auc.to_string(index=False))
 
     for attr_name in attrs:
         group_names = GROUP_NAMES[attr_name]
@@ -272,16 +389,6 @@ def run_fairness_analysis(
 
     df_agg.to_csv(out_dir / "fairness_aggregate.csv", index=False)
     df_dyn_lmk.to_csv(out_dir / "fairness_dynamic_by_landmark.csv", index=False)
- 
-    # AUC fairness
-    df_auc = auc_fairness_all_models(
-        df_dynamic=df_dyn_lmk, df_static_agg=df_agg,
-        time_col_dyn="landmark",
-        min_samples_per_group=50,
-    )
-    df_auc.to_csv(out_dir / "auc_fairness_comparison.csv", index=False)
-    print("\n=== AUC FAIRNESS ===")
-    print(df_auc.to_string(index=False))
 
 
     # Plots
@@ -292,11 +399,16 @@ def run_fairness_analysis(
         out_dir=out_dir, static_df=df_agg, min_samples_per_group=100,
     )
 
-    for attr_name in attrs:
-        sub = df_auc[df_auc["attr"] == attr_name].drop(columns="attr")
+    # Bar chart SEP-AUC: adatto il formato (righe per modello) a quello che
+    # plot_auc_fairness_bar si aspetta (colonne AUC_M_STATIC / AUC_M_DYNAMIC)
+    if not df_auc.empty:
+        bar_df = pd.DataFrame([{
+            "AUC_M_STATIC":  df_auc.loc[df_auc["Model"] == "M_STATIC",  "SEP-AUC Mean"].values[0],
+            "AUC_M_DYNAMIC": df_auc.loc[df_auc["Model"] == "M_DYNAMIC", "SEP-AUC Mean"].values[0],
+        }])
         plot_auc_fairness_bar(
-            df_auc=sub, out_dir=out_dir, attr_name=attr_name,
-            filename=f"fairness_auc_{attr_name}.png",
+            df_auc=bar_df, out_dir=out_dir, attr_name=fair_attr,
+            filename=f"fairness_auc_{fair_attr}.png",
         )
    
     print(f"\nFairness outputs saved in: {out_dir}")
@@ -437,6 +549,8 @@ def main():
     landmarks=cfg["landmarks"], collapse_pdh=True, n_bins=n_bins,
     group_names=GROUP_NAMES[args.fair_attr], 
     splits=splits_d,
+    # parametri per il PD-H full-horizon (Tanner et al. 2021): il modello viene
+    # interrogato su TUTTI gli n_bins dell'orizzonte, non solo su quelli osservati
     bin_times=dynamic_data["bin_time_vals"],
     feat_names=dynamic_data["feature_names"],
     delta=cfg.get("delta", 4),
@@ -446,7 +560,10 @@ def main():
     mask_d = res_dynamic["is_test"]
     mask_s = res_static["is_test"]
 
-    # PD-H full-horizon (Tanner et al. 2021)
+    # PD-H full-horizon (Tanner et al. 2021), calcolato PER FOLD: ogni fold usa il
+    # PROPRIO modello per predire il proprio test. Usare un unico modello (es.
+    # model_last) su tutti i fold sarebbe leakage: 4 fold su 5 avrebbero visto
+    # quei soggetti in training.
     pdh_df = pd.concat([
         _collapse_fold_full_horizon(
             model_k, scaler_k,
@@ -541,6 +658,13 @@ def main():
     lmk_vals=dyn_L,                     
     out_dir=out_dir, cfg=cfg,
     th_static=th_static, th_dynamic=th_dynamic,
+    # per la SEP-AUC come media dei fold (solo attributo target)
+    fair_attr=args.fair_attr,
+    res_static=res_static, res_dynamic=res_dynamic,
+    splits_s=splits_s, splits_d=splits_d,
+    static_data=static_data, dynamic_data=dynamic_data, n_bins=n_bins,
+    sens_static_full=static_sens_by_attr[args.fair_attr],
+    sens_dynamic_full=dyn_sens_by_attr[args.fair_attr],
     )
 
     if cfg["use_wandb"]:
@@ -552,12 +676,14 @@ def main():
                 f"{prefix}/separation":   row.get("separation"),
                 })
 
-        # AUC fairness
+        # Fairness (media dei fold, test): una riga per modello
         for _, row in df_auc.iterrows():
-            m = row["metric"]
+            m = row["Model"].lower()
             wandb.log({
-                f"auc_fairness/{m}/M_STATIC":  row["AUC_M_STATIC"],
-                f"auc_fairness/{m}/M_DYNAMIC": row["AUC_M_DYNAMIC"],
+                f"fairness/{m}/sep_auc_mean": row["SEP-AUC Mean"],
+                f"fairness/{m}/sep_auc_sd":   row["SEP-AUC SD"],
+                f"fairness/{m}/adTPR":        row["adTPR"],
+                f"fairness/{m}/adFPR":        row["adFPR"],
             })
 
         # Dynamic per landmark

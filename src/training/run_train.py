@@ -18,7 +18,7 @@ from sklearn.metrics import (
 )
 
 from src.training.train_mlp import train_mlp
-from src.evaluation.fairness_metrics import fairness_metrics, filter_sensitive
+from src.evaluation.fairness_metrics import fairness_metrics, filter_sensitive, compute_adTPR_adFPR
 from config import SEED
 
 
@@ -69,7 +69,11 @@ def _collapse_fold(hazard, event_bin, ids, lmk, n_bins, complete_only=True):
         "yh":  g["ev"].max(),
         "n":   g.size(),
     }).reset_index()
-    # Require all bins OR default
+    # require all bins present for the (subject, landmark), TRANNE per i
+    # soggetti con evento già risolto (yh==1): escono dal rischio appena
+    # avviene l'evento (n < n_bins per costruzione), ma l'esito è comunque
+    # completo e noto -> non vanno scartati come se fossero censoring.
+    # Scartiamo solo i gruppi incompleti E senza evento (vero censoring).
     if complete_only:
         out = out[(out["n"] == n_bins) | (out["yh"] == 1)]
     return out
@@ -98,7 +102,7 @@ def _collapse_fold_full_horizon(model, scaler, X, y, groups, lmk, bin_times,
 
     spl_idx = [i for i, f in enumerate(feat_names) if str(f).startswith("spl_")]
     if not spl_idx:
-        raise ValueError("No'spl_*' in feature_names")
+        raise ValueError("Nessuna colonna 'spl_*' in feature_names")
 
     d = pd.DataFrame({
         "row": idx,
@@ -122,6 +126,7 @@ def _collapse_fold_full_horizon(model, scaler, X, y, groups, lmk, bin_times,
     X_rep  = X[out["row"].to_numpy()]
     X_full = np.repeat(X_rep, n_bins, axis=0)
 
+    # mappa bin_time -> valori spline (ricavata dal dataset originale)
     bt_to_spl = {}
     for bt_val in np.unique(bin_times):
         j = np.where(bin_times == bt_val)[0][0]
@@ -171,12 +176,13 @@ def agg_mean_sd(list_of_dicts):
 def _eval_static(preds, y, sens, group_names, eval_th):
     yt_f, yp_f, sn_f = filter_sensitive(np.asarray(y).astype(int), preds, sens)
     if len(np.unique(yt_f)) < 2 or len(np.unique(sn_f)) < 2:
-        return np.nan, np.nan, np.nan
+        return np.nan, np.nan, np.nan, np.nan, np.nan
     auc = roc_auc_score(yt_f, yp_f)
     yb_f = (yp_f >= eval_th).astype(int)
     res = fairness_metrics(yt_f, yp_f, yb_f, sn_f, group_names, threshold=eval_th)
     s = res.get("axioms", {}).get("separation", np.nan)
-    return auc, s, s
+    ad = compute_adTPR_adFPR(yt_f, yb_f, sn_f, None)   # no time -> un solo "landmark"
+    return auc, s, s, ad["adTPR"], ad["adFPR"]
 
 
 def _integrate_curve(df_t, col, t_min=0.0, t_max=None):
@@ -248,9 +254,16 @@ def _eval_dynamic_from_pdh(coll, sens_by_id, group_names, eval_th):
     sep_mean = (df_t["separation"].mean()
                 if (not df_t.empty and "separation" in df_t.columns) else np.nan)
 
+    # adTPR / adFPR (Xie & Ge): media semplice dei gap |TPR_1-TPR_0| / |FPR_1-FPR_0|
+    # per landmark. A differenza di SEP-AUC (integrale della curva), sono medie
+    # semplici -> molto meno sensibili al rumore dei landmark con pochi dati.
+    yb_all = (eval_preds >= eval_th).astype(int)
+    ad = compute_adTPR_adFPR(eval_y, yb_all, eval_sens, eval_time)
+    adtpr, adfpr = ad["adTPR"], ad["adFPR"]
+
     class _Result(tuple):
         pass
-    result = _Result((auc_integrated, sep_auc, sep_mean))
+    result = _Result((auc_integrated, sep_auc, sep_mean, adtpr, adfpr))
     result.brier_integrated = brier_integrated
     result.df_perf = df_perf
     return result
@@ -343,14 +356,15 @@ def _fit_predict(splits, X, y, groups, sensitive,
 def _fairness_per_fold(fp, splits, which, X, y, groups, time_arr, sensitive,
                        group_names, th, n_bins, is_dyn,
                        bin_times=None, feat_names=None, delta=None, device="cpu"):
+    NAN5 = (np.nan,) * 5
     if group_names is None:
-        return (np.nan, np.nan, np.nan)
+        return NAN5
 
     if not is_dyn:
         oof  = fp["oof_val"] if which == "val" else fp["oof_test"]
         mask = fp["is_val"]  if which == "val" else fp["is_test"]
         if mask.sum() == 0:
-            return (np.nan, np.nan, np.nan)
+            return NAN5
         return _eval_static(oof[mask], y[mask], sensitive[mask], group_names, th)
 
     sens_by_id = pd.Series(sensitive, index=groups)
@@ -368,7 +382,7 @@ def _fairness_per_fold(fp, splits, which, X, y, groups, time_arr, sensitive,
         rows.append(_eval_dynamic_from_pdh(coll, sens_by_id, group_names, th))
 
     if not rows:
-        return (np.nan, np.nan, np.nan)
+        return NAN5
     arr = np.asarray(rows, dtype=float)
     return tuple(np.nanmean(arr, axis=0))
 
@@ -407,8 +421,8 @@ def run(X, y, groups, sensitive, splits, group_names,
 
     if not grid_search:
         r = _one(train_kwargs.pop("alpha", 0.0), train_kwargs.pop("beta", 0.0))
-        auc_val, sep_auc_val, sep_mean_val = r["val"]
-        auc_test, sep_auc_test, sep_mean_test = r["test"]
+        auc_val, sep_auc_val, sep_mean_val, adtpr_val, adfpr_val = r["val"]
+        auc_test, sep_auc_test, sep_mean_test, adtpr_test, adfpr_test = r["test"]
         
         # Store all predictions (full/test/val) that will be used be the related functions
         return dict(
@@ -418,7 +432,9 @@ def run(X, y, groups, sensitive, splits, group_names,
             threshold=r["threshold"],
             fold_models=r["fold_models"],
             auc_test=auc_test, separation_auc_test=sep_auc_test, separation_mean_test=sep_mean_test,
+            adtpr_test=adtpr_test, adfpr_test=adfpr_test,
             auc_val=auc_val, separation_auc_val=sep_auc_val, separation_mean_val=sep_mean_val,
+            adtpr_val=adtpr_val, adfpr_val=adfpr_val,
             model_last=r["model_last"], scaler_last=r["scaler_last"],
         )
 
@@ -453,8 +469,8 @@ def run(X, y, groups, sensitive, splits, group_names,
                                             sensitive, group_names, fixed_th, n_bins,
                                             is_dynamic, bin_times, feat_names, delta, device)
         else:
-            val_fixed = (np.nan, np.nan, np.nan)
-            test_fixed = (np.nan, np.nan, np.nan)
+            val_fixed = (np.nan,) * 5
+            test_fixed = (np.nan,) * 5
 
         # Combined selection criterion: worst-case (max) of the mobile-threshold
         # and fixed-threshold separation. A coefficient is only considered good
@@ -468,9 +484,12 @@ def run(X, y, groups, sensitive, splits, group_names,
             "coef": c, "coef_name": coef_name,
             # selection is done on VAL, own (per-coefficient) F1-optimal threshold
             "auc_mean": r["val"][0], "separation_auc": r["val"][1], "separation_mean": r["val"][2],
+            # adTPR/adFPR (medie semplici -> robuste al rumore, a differenza di SEP-AUC)
+            "adTPR": r["val"][3], "adFPR": r["val"][4],
             # unbiased report on TEST, own threshold
             "auc_mean_test": r["test"][0], "separation_auc_test": r["test"][1],
             "separation_mean_test": r["test"][2],
+            "adTPR_test": r["test"][3], "adFPR_test": r["test"][4],
             "threshold": r["threshold"],
             # same predictions, but re-evaluated at the FIXED (baseline) threshold
             "separation_auc_val_fixed": val_fixed[1], "separation_mean_val_fixed": val_fixed[2],
@@ -577,7 +596,8 @@ def run_grid_search(
     df_s["model"] = "M_STATIC"
     for _, row in df_s.iterrows():
         print(f"  beta={row['coef']:.2f}  AUC(val)={row['auc_mean']:.4f}  "
-              f"sep(val)={row['separation_auc']:.4f}  sep(val,fixed_th)={row['separation_auc_val_fixed']:.4f} ")
+              f"sep(val)={row['separation_auc']:.4f}  "
+              f"adTPR={row['adTPR']:.4f}  adFPR={row['adFPR']:.4f}")
 
     # M_DYNAMIC (coefficient = alpha)
     print("\n" + "=" * 60 + "\nGRID SEARCH — M_DYNAMIC\n" + "=" * 60)
@@ -590,7 +610,8 @@ def run_grid_search(
     df_d["model"] = "M_DYNAMIC"
     for _, row in df_d.iterrows():
         print(f"  alpha={row['coef']:.2f}  AUC(val)={row['auc_mean']:.4f}  "
-              f"sep(val)={row['separation_auc']:.4f}  sep(val,fixed_th)={row['separation_auc_val_fixed']:.4f} ")
+              f"sep(val)={row['separation_auc']:.4f}  "
+              f"adTPR={row['adTPR']:.4f}  adFPR={row['adFPR']:.4f}")
 
     df_grid = pd.concat([df_s, df_d], ignore_index=True)
     out_dir = Path(out_dir)
