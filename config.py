@@ -32,7 +32,7 @@ DROPOUT  = 0.3
 # Training 
 LR           = 1e-3
 WEIGHT_DECAY = 1e-4
-N_EPOCHS     = 200
+N_EPOCHS     = 500
 PATIENCE     = 30
 MIN_LR       = 1e-5
 PW_CLIP      = 10.0    # cap on pos_weight
@@ -126,6 +126,6 @@ GRID_ALPHAS = [0.0, 0.05, 0.1, 0.15 , 0.2, 0.25, 0.3, 0.5, 0.7]
 
 
 # W&B
-USE_WANDB    = False
+USE_WANDB    = True
 WANDB_ENTITY = "alessia-ciccaglione02-"
 WANDB_PROJECT = "ThesisFairness"
