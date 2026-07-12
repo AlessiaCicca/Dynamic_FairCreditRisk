@@ -67,29 +67,29 @@ def plot_separation_over_time_single(
     plt.close(fig)
     return path
 
-# Real dataset: multiple sensitive attributes 
+# Real dataset
 def plot_separation_over_time(
     df,
     time_col,
     title,
     filename,
     out_dir,
-    static_df=None,
+    static_val=None,
     attrs=None,
     min_samples_per_group=50,
 ):
     if attrs is None:
-        attrs = ["SEX", "RACE", "AGE"]
+        attrs = df["attr"].unique().tolist() if "attr" in df.columns else [None]
 
     fig, ax = plt.subplots(figsize=(10, 5))
 
     for attr_name in attrs:
-        color  = ATTR_COLORS.get(attr_name, "tab:gray")
-        subset = df[df["attr"] == attr_name].sort_values(time_col).copy()
+        color  = ATTR_COLORS.get(attr_name, "tab:orange")
+        subset = (df[df["attr"] == attr_name] if attr_name is not None else df).sort_values(time_col).copy()
         if subset.empty:
             continue
-          
-        # Sets separation to NaN where the smallest group has too few samples 
+
+        # Sets separation to NaN where the smallest group has too few samples
         if "n_group_min" in subset.columns:
             subset.loc[subset["n_group_min"] < min_samples_per_group,
                        "separation"] = np.nan
@@ -100,28 +100,21 @@ def plot_separation_over_time(
         if is_valid.sum() == 0:
             continue
 
-        # Splits the curve at NaN gaps and plots only the valid segments 
+        # Splits the curve at NaN gaps and plots only the valid segments
         boundaries  = np.where(np.diff(is_valid.astype(int)) != 0)[0] + 1
         first_label = True
         for seg in np.split(np.arange(len(x)), boundaries):
             if not is_valid[seg[0]]:
                 continue
             ax.plot(x[seg], y[seg], marker="o", markersize=4, color=color,
-                    label=attr_name if first_label else "_nolegend_")
+                    label=(attr_name or "M_DYNAMIC") if first_label else "_nolegend_")
             first_label = False
 
-        # Draws a horizontal dashed line for the static model baseline 
-        if static_df is not None:
-            static_row = static_df[
-                (static_df["attr"]  == attr_name) &
-                (static_df["model"] == "M_STATIC")
-            ]
-            if not static_row.empty and "separation" in static_row.columns:
-                sv = static_row["separation"].values[0]
-                if not np.isnan(sv):
-                    ax.axhline(y=sv, color=color, linestyle="--",
-                               linewidth=1.2, alpha=0.6,
-                               label=f"{attr_name} (static)")
+        # Draws a horizontal dashed line for the static model baseline
+        if static_val is not None and not np.isnan(static_val):
+            ax.axhline(y=static_val, color=color, linestyle="--",
+                       linewidth=1.2, alpha=0.6,
+                       label=f"{attr_name or 'M_DYNAMIC'} (static)")
 
     ax.set_title("Separation over time")
     ax.set_xlabel(time_col)
@@ -135,7 +128,6 @@ def plot_separation_over_time(
     plt.show()
     plt.close(fig)
     return path
-
 
 # Bar Chart
 def plot_auc_fairness_bar(

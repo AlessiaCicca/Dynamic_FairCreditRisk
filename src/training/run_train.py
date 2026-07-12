@@ -9,6 +9,7 @@ test sets.
 
 import numpy as np
 import pandas as pd
+import torch
 import matplotlib.pyplot as plt
 from pathlib import Path
 from matplotlib.lines import Line2D
@@ -62,15 +63,18 @@ def make_splits(y, groups, n_splits=5, val_size=0.5, seed=SEED):
         splits.append((tr_idx, te_idx[a_pos], te_idx[b_pos]))
     return splits
 
-# F1-optimal threshold
-def find_best_threshold(y_true, p, max_th_quantile=0.90):
+# F1-optimal threshold (F1 puro: nessun vincolo aggiuntivo sulla soglia).
+#
+# La versione precedente azzerava l'F1 per tutte le soglie sopra il 90esimo
+# percentile delle predizioni, vincolando implicitamente il modello a non
+# predire positivo piu' del 10% del campione. Non era un vincolo dichiarato ne'
+# giustificato, e con una prevalenza reale del ~6% escludeva soglie legittime.
+def find_best_threshold(y_true, p):
     p = np.clip(p, 0, 1)
     prec, rec, thresholds = precision_recall_curve(y_true, p)
     if len(thresholds) == 0:
         return 0.5
-    max_th = np.quantile(p, max_th_quantile)
     f1_scores = 2 * prec[:-1] * rec[:-1] / (prec[:-1] + rec[:-1] + 1e-8)
-    f1_scores[thresholds > max_th] = 0
     return float(thresholds[np.argmax(f1_scores)])
 
 # From hazard per bin to PD(L,L+h)
@@ -335,14 +339,19 @@ def _fit_predict(splits, X, y, groups, sensitive,
         is_val[val_idx] = True
         is_test[test_idx] = True
 
-        # threshold on train (full-horizon PD-H, col modello di QUESTO fold)
+        # Soglia scelta sul VALIDATION del fold (non sul training).
+        # Il training e' in-sample: il modello ha gia' visto quei dati, quindi le
+        # sue predizioni sono troppo confidenti e la soglia ne risulta distorta.
+        # La soglia e' a tutti gli effetti un iperparametro della regola
+        # decisionale -> va scelta su val, come il coefficiente alpha/beta.
         if collapse_pdh:
-            tr_pdh = _collapse_fold_full_horizon(
+            val_pdh_th = _collapse_fold_full_horizon(
                 model, scaler, X, y, groups, time_arr, bin_times, feat_names,
-                tr_idx, n_bins, delta, device)
-            thresholds.append(find_best_threshold(tr_pdh["yh"], tr_pdh["pdh"]))
+                val_idx, n_bins, delta, device)
+            thresholds.append(find_best_threshold(val_pdh_th["yh"], val_pdh_th["pdh"]))
         else:
-            thresholds.append(find_best_threshold(y[tr_idx], p_tr))
+            p_val_th = p_te[[pos[i] for i in val_idx]]
+            thresholds.append(find_best_threshold(y[val_idx], p_val_th))
 
         fold_models.append((model, scaler))
         model_last, scaler_last = model, scaler
@@ -369,7 +378,9 @@ def _fit_predict(splits, X, y, groups, sensitive,
     return dict(
         oof_val=oof_val, oof_test=oof_test, oof_full=oof_full,
         is_val=is_val, is_test=is_test,
-        threshold=float(np.mean(thresholds)),
+        threshold=float(np.mean(thresholds)),   # media (per retrocompatibilita')
+        fold_thresholds=thresholds,             # soglia PER FOLD: ogni fold usa
+                                                # la propria per valutare il suo test
         model_last=model_last, scaler_last=scaler_last,
         fold_models=fold_models,
     )
@@ -380,10 +391,20 @@ def _fit_predict(splits, X, y, groups, sensitive,
 # split sarebbe leakage: 4 fold su 5 avrebbero visto quei soggetti in training.
 def _fairness_per_fold(fp, splits, which, X, y, groups, time_arr, sensitive,
                        group_names, th, n_bins, is_dyn,
-                       bin_times=None, feat_names=None, delta=None, device="cpu"):
+                       bin_times=None, feat_names=None, delta=None, device="cpu",
+                       use_fold_threshold=True):
+    """
+    use_fold_threshold=True: ogni fold usa la PROPRIA soglia (scelta sul suo val)
+    per valutare il proprio split -- cosi' ogni fold e' un esperimento
+    self-contained (train -> allena, val -> soglia, test -> riporta).
+    Se False, usa la soglia `th` passata (serve per la valutazione a soglia
+    FISSA del baseline nella grid search).
+    """
     NAN5 = (np.nan,) * 5
     if group_names is None:
         return NAN5
+
+    fold_ths = fp.get("fold_thresholds") if use_fold_threshold else None
 
     if not is_dyn:
         # ANCHE lo statico va valutato PER FOLD e poi mediato, coerentemente
@@ -392,11 +413,12 @@ def _fairness_per_fold(fp, splits, which, X, y, groups, time_arr, sensitive,
         # numero non confrontabile con quello del dinamico.
         oof = fp["oof_val"] if which == "val" else fp["oof_test"]
         rows = []
-        for (tr_idx, val_idx, test_idx) in splits:
+        for k, (tr_idx, val_idx, test_idx) in enumerate(splits):
             idx = val_idx if which == "val" else test_idx
             if len(idx) == 0:
                 continue
-            r = _eval_static(oof[idx], y[idx], sensitive[idx], group_names, th)
+            th_k = fold_ths[k] if fold_ths is not None else th
+            r = _eval_static(oof[idx], y[idx], sensitive[idx], group_names, th_k)
             rows.append(r)
         if not rows:
             return NAN5
@@ -415,7 +437,8 @@ def _fairness_per_fold(fp, splits, which, X, y, groups, time_arr, sensitive,
             idx, n_bins, delta, device)
         if len(coll) == 0:
             continue
-        rows.append(_eval_dynamic_from_pdh(coll, sens_by_id, group_names, th))
+        th_k = fold_ths[k] if fold_ths is not None else th
+        rows.append(_eval_dynamic_from_pdh(coll, sens_by_id, group_names, th_k))
 
     if not rows:
         return NAN5
@@ -466,6 +489,7 @@ def run(X, y, groups, sensitive, splits, group_names,
             oof_test=r["oof_test"], is_test=r["is_test"],
             oof_val=r["oof_val"], is_val=r["is_val"],
             threshold=r["threshold"],
+            fold_thresholds=r["fold_thresholds"],
             fold_models=r["fold_models"],
             auc_test=auc_test, separation_auc_test=sep_auc_test, separation_mean_test=sep_mean_test,
             adtpr_test=adtpr_test, adfpr_test=adfpr_test,
@@ -500,10 +524,12 @@ def run(X, y, groups, sensitive, splits, group_names,
         if fixed_th is not None:
             val_fixed = _fairness_per_fold(r, splits, "val", X, y, groups, time_arr,
                                            sensitive, group_names, fixed_th, n_bins,
-                                           is_dynamic, bin_times, feat_names, delta, device)
+                                           is_dynamic, bin_times, feat_names, delta, device,
+                                           use_fold_threshold=False)
             test_fixed = _fairness_per_fold(r, splits, "test", X, y, groups, time_arr,
                                             sensitive, group_names, fixed_th, n_bins,
-                                            is_dynamic, bin_times, feat_names, delta, device)
+                                            is_dynamic, bin_times, feat_names, delta, device,
+                                            use_fold_threshold=False)
         else:
             val_fixed = (np.nan,) * 5
             test_fixed = (np.nan,) * 5
@@ -576,11 +602,12 @@ def run_cv(X, y, groups, sensitive,
             metrics_list.append(dict(
                 AUC=_integrate_curve(df_perf, "auc"),
                 Brier=_integrate_curve(df_perf, "brier"),
-                Th=r["threshold"],
+                Th=r["fold_thresholds"][k],
             ))
         else:
             metrics_list.append(metrics_all(y[test_idx].astype(int),
-                                            r["oof_test"][test_idx], r["threshold"]))
+                                            r["oof_test"][test_idx],
+                                            r["fold_thresholds"][k]))
 
     summary = agg_mean_sd(metrics_list)
     summary["Model"] = model_name.upper()
@@ -620,18 +647,18 @@ def run_grid_search(
         splits_dynamic = make_splits(y_dynamic, grp_dynamic, n_folds, val_size, split_seed)
 
     # M_STATIC (coefficient = beta)
-    print("=" * 60 + "\nGRID SEARCH — M_STATIC\n" + "=" * 60)
+    print( "\nGRID SEARCH — M_STATIC\n" + "=" * 60)
     df_s = run(X_static, y_static, grp_static, sens_static, splits_static, group_names,
                model_name="static", is_dynamic=False, eo_mode_d=eo_mode_d,
                grid_search=True, coefs=betas)
     df_s["model"] = "M_STATIC"
     for _, row in df_s.iterrows():
-        print(f"  beta={row['coef']:.2f}  AUC(val)={row['auc_mean']:.4f}  "
-              f"sep(val)={row['separation_auc']:.4f}  "
+        print(f"  beta={row['coef']:.2f}  AUC={row['auc_mean']:.4f}  "
+              f"sep={row['separation_auc']:.4f}  "
               f"adTPR={row['adTPR']:.4f}  adFPR={row['adFPR']:.4f}")
 
     # M_DYNAMIC (coefficient = alpha)
-    print("\n" + "=" * 60 + "\nGRID SEARCH — M_DYNAMIC\n" + "=" * 60)
+    print("\n" + "\nGRID SEARCH — M_DYNAMIC\n" + "=" * 60)
     df_d = run(X_dynamic, y_dynamic, grp_dynamic, sens_dynamic, splits_dynamic, group_names,
                time_arr=lmk_vals, subj_ids=grp_dynamic, model_name="dynamic",
                n_bins=n_bins, collapse_pdh=True, is_dynamic=True,
@@ -640,8 +667,8 @@ def run_grid_search(
                bin_times=bin_times, feat_names=feat_names, delta=delta, device=device)
     df_d["model"] = "M_DYNAMIC"
     for _, row in df_d.iterrows():
-        print(f"  alpha={row['coef']:.2f}  AUC(val)={row['auc_mean']:.4f}  "
-              f"sep(val)={row['separation_auc']:.4f}  "
+        print(f"  alpha={row['coef']:.2f}  AUC={row['auc_mean']:.4f}  "
+              f"sep={row['separation_auc']:.4f}  "
               f"adTPR={row['adTPR']:.4f}  adFPR={row['adFPR']:.4f}")
 
     df_grid = pd.concat([df_s, df_d], ignore_index=True)
