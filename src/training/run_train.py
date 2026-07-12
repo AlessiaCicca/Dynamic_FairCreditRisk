@@ -28,6 +28,26 @@ MODEL_STYLES = {
 }
 
 
+def _reset_seed(fold, seed=SEED):
+    """
+    Reimposta lo stato RNG prima di ogni training, in modo DETERMINISTICO e
+    dipendente solo dal fold (non da quanti training sono gia' stati fatti).
+
+    Senza questo, il seed viene impostato una volta sola all'avvio e ogni
+    training consuma lo stream RNG: run_cv e run_grid_search partono quindi da
+    stati diversi e producono modelli DIVERSI a parita' di iperparametri
+    (pesi iniziali diversi -> soglie diverse -> metriche diverse). Questo
+    rendeva non confrontabili i numeri di cv_results.csv con quelli della grid
+    search, e non riproducibile il singolo esperimento.
+    """
+    import torch
+    s = seed + 1000 * fold
+    np.random.seed(s)
+    torch.manual_seed(s)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(s)
+
+
 # Split definition: Build the train/val/test folds once and return them as a list of
 #   (train_idx, val_idx, test_idx) tuples.
 def make_splits(y, groups, n_splits=5, val_size=0.5, seed=SEED):
@@ -292,6 +312,11 @@ def _fit_predict(splits, X, y, groups, sensitive,
     for fold, (tr_idx, val_idx, test_idx) in enumerate(splits):
         te_idx = np.concatenate([val_idx, test_idx])
 
+        # RNG deterministico per fold: garantisce che lo stesso fold, con gli
+        # stessi iperparametri, produca sempre lo stesso modello -- sia in
+        # run_cv sia in run_grid_search.
+        _reset_seed(fold)
+
          # train MLP on the training fold, predict on the whole held-out (val + test)
         p_te, p_tr, model, scaler = train_mlp(
             X[tr_idx], y[tr_idx], X[te_idx], y[te_idx],
@@ -361,11 +386,22 @@ def _fairness_per_fold(fp, splits, which, X, y, groups, time_arr, sensitive,
         return NAN5
 
     if not is_dyn:
-        oof  = fp["oof_val"] if which == "val" else fp["oof_test"]
-        mask = fp["is_val"]  if which == "val" else fp["is_test"]
-        if mask.sum() == 0:
+        # ANCHE lo statico va valutato PER FOLD e poi mediato, coerentemente
+        # col dinamico (e con cv_results.csv). Prima veniva calcolato una volta
+        # sola su tutta la maschera out-of-fold (= aggregato), producendo un
+        # numero non confrontabile con quello del dinamico.
+        oof = fp["oof_val"] if which == "val" else fp["oof_test"]
+        rows = []
+        for (tr_idx, val_idx, test_idx) in splits:
+            idx = val_idx if which == "val" else test_idx
+            if len(idx) == 0:
+                continue
+            r = _eval_static(oof[idx], y[idx], sensitive[idx], group_names, th)
+            rows.append(r)
+        if not rows:
             return NAN5
-        return _eval_static(oof[mask], y[mask], sensitive[mask], group_names, th)
+        arr = np.asarray(rows, dtype=float)
+        return tuple(np.nanmean(arr, axis=0))
 
     sens_by_id = pd.Series(sensitive, index=groups)
     sens_by_id = sens_by_id[~sens_by_id.index.duplicated(keep="first")]
@@ -570,14 +606,9 @@ def run_grid_search(
     out_dir=Path("outputs"), run_tag="run",
 ):
 
-    np.random.seed(SEED)
-    try:
-        import torch
-        torch.manual_seed(SEED)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed(SEED)
-    except Exception:
-        pass
+    # NB: non serve piu' reimpostare i seed qui -- _fit_predict lo fa in modo
+    # deterministico all'inizio di OGNI fold (_reset_seed), quindi run_cv e
+    # run_grid_search producono gli stessi modelli a parita' di iperparametri.
 
     if betas is None:
         betas = [0.0, 0.3, 0.5, 0.7, 1.0]
