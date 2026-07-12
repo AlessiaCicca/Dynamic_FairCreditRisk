@@ -52,7 +52,7 @@ create_ctime <- function(nsub){
 
 create_coeff <- function(nsub, scenario){
   NoiseS <- 1.5
-  nperiod <- 12
+  nperiod <- 24
   Beta1 <- c(1, -1, 1, -1, -0.25, 0.5) 
   Lambda = 0.5
   Alpha = 0

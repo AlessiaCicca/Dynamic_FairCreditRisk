@@ -209,7 +209,7 @@ def _eval_static(preds, y, sens, group_names, eval_th):
     return auc, s, s, ad["adTPR"], ad["adFPR"]
 
 
-def _integrate_curve(df_t, col, t_min=0.0, t_max=None):
+def _integrate_curve(df_t, col, t_min=None, t_max=None):
     if df_t.empty or col not in df_t.columns:
         return np.nan
     sub = df_t.dropna(subset=[col])
@@ -217,6 +217,14 @@ def _integrate_curve(df_t, col, t_min=0.0, t_max=None):
         return np.nan
     t_v = sub["t"].to_numpy(float)
     v = sub[col].to_numpy(float)
+    # normalizza sempre sull'intervallo REALMENTE osservato, a meno che il
+    # chiamante non specifichi esplicitamente un range diverso. Il vecchio
+    # default t_min=0.0 sottostimava sistematicamente l'integrale ogni volta
+    # che i landmark non partivano da 0 (es. simulation con LANDMARKS_SIM che
+    # parte da 1 o 2): l'area veniva calcolata solo sul range osservato ma
+    # divisa per un intervallo piu' largo, deflazionando il risultato.
+    if t_min is None:
+        t_min = t_v.min()
     if t_max is None:
         t_max = t_v.max()
     if t_max - t_min <= 0:

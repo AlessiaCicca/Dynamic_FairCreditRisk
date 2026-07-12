@@ -42,10 +42,10 @@ N_FOLDS = 3
 
 # Simulation dataset
 SCENARIO         = "fair"          # "fair" | "direct" | "proxy" | "temporal"
-HORIZON          = 3               # prediction horizon (periods)
-LANDMARKS_SIM        = list(range(1, 13))
+HORIZON          = 6               # prediction horizon (periods)
+LANDMARKS_SIM        = [0, 2, 4, 6, 8, 10,  12,  14, 16, 18]
 N_TEST_LANDMARKS = 12
-DELTA_SIM=1
+DELTA_SIM=2
 
 # Column names in simulation dataset
 ID_COL    = "ID"
@@ -126,6 +126,6 @@ GRID_ALPHAS = [0.0, 0.05, 0.1, 0.15 , 0.2, 0.25, 0.3, 0.5, 0.7]
 
 
 # W&B
-USE_WANDB    = True
+USE_WANDB    = False
 WANDB_ENTITY = "alessia-ciccaglione02-"
 WANDB_PROJECT = "ThesisFairness"

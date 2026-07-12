@@ -21,7 +21,7 @@ create_theta <- function(data, scenario, coeff){
       Fstar <- X %*% coeff$Beta1 + coeff$Beta0[1] + coeff$BetaS * S
       theta <- exp(Fstar)
       
-      nperiod <- 12
+      nperiod <- 24
       nsub    <- nrow(data) / nperiod
   
       # Subject-level noise: one value per subject, repeated across their periods
@@ -70,7 +70,7 @@ tvstimegnrt <- function(nsub = 200,
                         scenario = c("fair", "direct", "proxy", "temporal"), 
                         matsigma = NULL){
 
-  nperiod <- 12
+  nperiod <- 24
   
   # Generate covariate matrix
   Data <- matrix(NA, nperiod * nsub, 8)
@@ -113,8 +113,11 @@ tvstimegnrt <- function(nsub = 200,
   U <- runif(nsub)
   survtime <- rep(0, nsub)
   survnrow <- rep(0, nsub)
+  # Data[,"ID"] e' rep(1:nsub, each=nperiod) -> blocchi contigui, indice diretto
+  # invece di which() (che scansionava l'intero vettore per ogni soggetto)
   for (Count in 1:nsub) {
-    idxC <- which(Data[, "ID"] == Count)
+    base <- (Count - 1L) * nperiod
+    idxC <- (base + 1L):(base + nperiod)
     VEC <- c(0, cumsum(R[Count, ]), Inf)
     R.ID <- findInterval(-log(U[Count]), VEC)
     TT <- -log(U[Count]) - VEC[R.ID] 

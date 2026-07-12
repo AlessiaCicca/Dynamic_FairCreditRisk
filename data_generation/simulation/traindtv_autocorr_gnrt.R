@@ -12,7 +12,7 @@ traindtv_autocorr_gnrt <- function(nsub = 200,
                                    scenario = c("fair", "direct", "proxy", "temporal")){
   
   nstime <- 1000
-  nperiod <- 12
+  nperiod <- 24
 
 
   # chngpt defines the 12 discrete time interval boundaries always computed on "fair" to
@@ -85,20 +85,25 @@ traindtv_autocorr_gnrt <- function(nsub = 200,
   U <- runif(nsub)
   
   TS <- as.vector(rep(c(0, chngpt[1:(nperiod - 1)]), nsub))
+  # Data$ID e' rep(1:nsub, each = nperiod) -> blocchi contigui, quindi l'indice
+  # del soggetto Count si calcola direttamente, niente bisogno di which() (che
+  # scansionava l'intero vettore ID per OGNI soggetto: O(nperiod * nsub^2),
+  # diventava proibitivo per nsub grandi). Stesso risultato, molto piu' veloce.
   for (Count in 1:nsub) {
-    idxC <- which(Data$ID == Count)
+    base  <- (Count - 1L) * nperiod
+    idxC  <- (base + 1L):(base + nperiod)
     VEC <- c(0, R[, Count], Inf)
     rID <- findInterval(-log(U[Count]), VEC)
     if (rID == 1){
       # event in first period
-      Data[idxC, ][1, ]$Event <- 1
+      Data$Event[idxC[1]] <- 1
     } else if (rID <= nperiod){
       # survived up to rID-1, event at rID
-      Data[idxC, ][1:(rID - 1), ]$Event <- 0
-      Data[idxC, ][rID, ]$Event <- 1
+      Data$Event[idxC[1:(rID - 1)]] <- 0
+      Data$Event[idxC[rID]] <- 1
     } else {
       # survived all periods → censored
-      Data[idxC, ]$Event <- 0
+      Data$Event[idxC] <- 0
     }
   }
   

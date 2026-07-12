@@ -26,7 +26,7 @@ genvar <- function(nsub = 1000,
   #SET BASIC DIMENSIONS
   ncov <- 6
   ncovfixed <- 2
-  nperiod <- 12
+  nperiod <- 24
   n1seq <- ncovfixed * nsub    #TI variables
   n2seq <- (ncov - ncovfixed) * nsub    #TV variables
 

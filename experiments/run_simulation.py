@@ -429,58 +429,6 @@ def main():
         first_event_col="FirstEventTime",
         sens_col="sens_loan", enc_cat=enc_cat,
     )
-    # === DIAGNOSTICA CLASS IMBALANCE ===
-    y_stat = static_data["y"]
-    n_pos_s, n_neg_s = int((y_stat == 1).sum()), int((y_stat == 0).sum())
-    print(f"\n[DIAG] STATIC   righe={len(y_stat)}  pos={n_pos_s}  neg={n_neg_s}  "
-          f"rapporto neg:pos={n_neg_s/max(n_pos_s,1):.1f}:1")
-    print(f"[DIAG] STATIC   soggetti unici={len(np.unique(static_data['groups']))}")
-
-    y_dyn = dynamic_data["y"]
-    n_pos_d, n_neg_d = int((y_dyn == 1).sum()), int((y_dyn == 0).sum())
-    print(f"[DIAG] DYNAMIC  righe={len(y_dyn)}  pos={n_pos_d}  neg={n_neg_d}  "
-          f"rapporto neg:pos={n_neg_d/max(n_pos_d,1):.1f}:1")
-    print(f"[DIAG] DYNAMIC  soggetti unici={len(np.unique(dynamic_data['groups']))}")
-    print(f"[DIAG] DYNAMIC  delta usato={cfg.get('delta', 1)}  n_bins={cfg['horizon'] // cfg.get('delta', 1)}")
-    print(f"[DIAG] DYNAMIC  landmarks={sorted(np.unique(dynamic_data['lmk_vals']).tolist())}")
-
-    rows_per_subj = len(y_dyn) / len(np.unique(dynamic_data["groups"]))
-    print(f"[DIAG] DYNAMIC  righe medie per soggetto={rows_per_subj:.2f}")
-
-    pos_mask = y_dyn == 1
-    n_subj_with_event = len(np.unique(dynamic_data["groups"][pos_mask])) if n_pos_d > 0 else 0
-    print(f"[DIAG] DYNAMIC  soggetti con almeno un evento={n_subj_with_event}")
-    # === FINE DIAGNOSTICA ===
-
-    import numpy as np
-
-    # quanti soggetti hanno storia effettiva fino a T=12?
-    # e quanti landmark, per costruzione, richiedono L+HORIZON > 12?
-    landmarks = cfg["landmarks"]
-    horizon = cfg["horizon"]
-    bad_landmarks = [L for L in landmarks if L + horizon > 12]
-    print("Landmark la cui finestra [L, L+horizon] supera T=12:", bad_landmarks)
-
-    # quante righe del dataset dinamico appartengono a questi landmark "al bordo"
-    lmk_vals = dynamic_data["lmk_vals"]
-    mask_bad = np.isin(lmk_vals, bad_landmarks)
-    print(f"Righe totali su landmark al bordo: {mask_bad.sum()} / {len(lmk_vals)} "
-          f"({100*mask_bad.sum()/len(lmk_vals):.1f}%)")
-
-    # tasso di evento su landmark "normali" vs landmark "al bordo"
-    y_dyn = dynamic_data["y"]
-    if mask_bad.sum() > 0:
-        print("Tasso positivi landmark normali:", y_dyn[~mask_bad].mean())
-        print("Tasso positivi landmark al bordo:", y_dyn[mask_bad].mean())
-
-
-    spl_idx = [i for i, f in enumerate(dynamic_data["feature_names"]) if f.startswith("spl_")]
-    X_spl = dynamic_data["X"][:, spl_idx]
-    print("Varianza colonne spline:", X_spl.var(axis=0))
-    print("bin_time unici:", sorted(np.unique(dynamic_data["bin_time_vals"]).tolist()))
-
-    # quante colonne totali ha X? per capire il peso relativo delle spline
-    print("Totale feature:", dynamic_data["X"].shape[1], " di cui spline:", len(spl_idx))
     del df; gc.collect()
 
     # Cross-validation

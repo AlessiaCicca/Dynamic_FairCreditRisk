@@ -26,7 +26,7 @@ dir.create(run_folder)
 cat("Output folder:", run_folder, "\n")
 
 for (sc in scenarios) {
-  result <- traindtv_autocorr_gnrt(nsub = 24000, matsigma = matsigma, scenario = sc)
+  result <- traindtv_autocorr_gnrt(nsub = 25000, matsigma = matsigma, scenario = sc)
   
   # --- Compute event counts and percentages by group S ---
   df        <- result$fullData
