@@ -97,7 +97,7 @@ RACE_MINORITY = {
     "black or african american",
     "american indian or alaska native",
     "native hawaiian or other pacific islander",
-    "2 or more races"
+    "2 or more minority races"
 }
 
 

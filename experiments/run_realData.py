@@ -335,7 +335,7 @@ def run_fairness_analysis(
         df=df_dyn_lmk, time_col="landmark",
         title=f"Fairness — M_DYNAMIC by landmark ({fair_attr})",
         filename="fairness_dynamic_by_landmark.png",
-        out_dir=out_dir, static_val=static_sep, min_samples_per_group=100,
+        out_dir=out_dir, static_val=static_sep, min_samples_per_group=20,
     )
 
 
