@@ -62,7 +62,7 @@ def auc_fairness_all_models(
     df_dynamic, df_static_agg,
     time_col_dyn="landmark",
     attrs=None,
-    min_samples_per_group=50,
+    min_samples_per_group=20,
 ):
     if attrs is None:
         attrs = ["SEX", "RACE", "AGE"]

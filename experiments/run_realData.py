@@ -286,7 +286,7 @@ def run_fairness_analysis(
     ybin_dynamic = (dynamic_oof >= th_dynamic).astype(int)
 
     dyn_rows = []
-    MIN_GROUP = 50
+    MIN_GROUP = 20
 
     # Dynamic per landmark 
     for L in cfg["landmarks"]:

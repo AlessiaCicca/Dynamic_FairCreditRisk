@@ -29,7 +29,7 @@ def plot_separation_over_time_single(
     filename,
     out_dir,
     static_val=None,
-    min_samples_per_group=50,
+    min_samples_per_group=20,
 ):
     fig, ax = plt.subplots(figsize=(8, 5))
 
@@ -76,7 +76,7 @@ def plot_separation_over_time(
     out_dir,
     static_val=None,
     attrs=None,
-    min_samples_per_group=50,
+    min_samples_per_group=20,
 ):
     if attrs is None:
         attrs = df["attr"].unique().tolist() if "attr" in df.columns else [None]

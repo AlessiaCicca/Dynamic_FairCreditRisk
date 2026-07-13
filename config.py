@@ -32,7 +32,7 @@ DROPOUT  = 0.3
 # Training 
 LR           = 1e-3
 WEIGHT_DECAY = 1e-4
-N_EPOCHS     = 500
+N_EPOCHS     = 200
 PATIENCE     = 30
 MIN_LR       = 1e-5
 PW_CLIP      = 10.0    # cap on pos_weight
@@ -63,8 +63,6 @@ GROUP_NAMES_SIM = {0: "S0", 1: "S1"}
 
 # Real dataset
 HORIZON_MONTHS = 12
-#LANDMARKS = [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42, 45, 48]
-#LANDMARKS = [0, 6,  12,  18,  24,  30,  36,  42, 48]
 LANDMARKS = [0, 4, 8, 12, 16,  20,  24, 28,  32,  36, 40,  44, 48]
 DELTA=4
 
@@ -76,17 +74,7 @@ TVC_COLS = [
     "current_upb", "current_interest_rate", "estimated_ltv", "bd_pct","current_upb_delta"
 ]
 CAT_COLS = ["occupancy_status_orig", "loan_purpose_orig", ]
-'''
 
-STATIC_COLS = [
-    "credit_score", "original_dti", "original_ltv", "first_time_homebuyer",
-    "interest_rate", "loan_term", "num_borrowers", "loan_amount"
-]
-TVC_COLS = [
-    "current_upb", "current_interest_rate", "estimated_ltv", "bd_pct", "current_upb_delta"
-]
-CAT_COLS = ["occupancy_status_orig", "loan_purpose_orig", "borrower_assistance_status"]
-'''
 
 FAIR_ATTR   = "SEX"    # "SEX" | "RACE" | "AGE"
 GROUP_NAMES = {
@@ -113,14 +101,7 @@ RACE_MINORITY = {
 }
 
 
-# Grid search SIMULATION
-#GRID_BETAS  = [0.0, 0.5, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.0]
-#GRID_ALPHAS = [0.0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50]
-
-# Grid search REAL_DATA
-#GRID_BETAS  = [0.0, 0.5, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.0]
-#GRID_ALPHAS = [0.0, 0.01, 0.03, 0.05, 0.08, 0.10, 0.15, 0.20, 0.30]
-
+# Grid search
 GRID_BETAS  = [0.0, 0.05, 0.1, 0.15 , 0.2, 0.25, 0.3, 0.5, 0.7]
 GRID_ALPHAS = [0.0, 0.05, 0.1, 0.15 , 0.2, 0.25, 0.3, 0.5, 0.7]
 

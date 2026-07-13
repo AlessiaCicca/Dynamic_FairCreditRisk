@@ -15,6 +15,8 @@ from src.models.mlp import MLP
 from src.losses.eo_static import equalized_odds_loss
 from src.losses.eo_dynamic import equalized_odds_loss_dynamic
 
+from config import (WEIGHT_DECAY, PATIENCE, N_EPOCHS,LR, PW_CLIP)
+
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -31,12 +33,12 @@ def train_mlp(
     hidden1=64,
     hidden2=32,
     dropout=0.3,
-    lr=1e-3,
-    weight_decay=1e-4,
-    n_epochs=200,
-    patience=30,
+    lr=LR,
+    weight_decay=WEIGHT_DECAY,
+    n_epochs=N_EPOCHS,
+    patience=PATIENCE,
     min_lr=1e-5,
-    pw_clip=10.0,
+    pw_clip=PW_CLIP,
     beta=0.0,    # M_STATIC
     alpha=0.0,   # M_DYNAMIC
     eo_mode_d="mean",

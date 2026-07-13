@@ -79,7 +79,6 @@ def equalized_odds_loss_dynamic(
     label_pred, sensitive, label_true, time_vals,
     mode="trend_aware",
     min_group_frac=0.01,
-    trend_weight=0.4,
     current_epoch=0,
     time_schedule_mode="flat",
     group_idx=None,

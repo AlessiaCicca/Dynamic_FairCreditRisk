@@ -275,7 +275,7 @@ def _eval_dynamic_from_pdh(coll, sens_by_id, group_names, eval_th):
         yt_f, yp_f, sn_f = filter_sensitive(eval_y[mask], eval_preds[mask], eval_sens[mask])
         if len(np.unique(yt_f)) < 2 or len(np.unique(sn_f)) < 2:
             continue
-        if pd.Series(sn_f).value_counts().min() < 50:
+        if pd.Series(sn_f).value_counts().min() < 20:
             continue
         yb_f = (yp_f >= eval_th).astype(int)
         res = fairness_metrics(yt_f, yp_f, yb_f, sn_f, group_names, threshold=eval_th)
