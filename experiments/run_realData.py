@@ -362,9 +362,9 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
 
     run_tag = (
-        f"realData_{args.fair_attr}"
+        f"realData_{args.fair_attr}_{cfg['eo_mode_d']}"
         f"_S:{cfg['beta']}"
-        f"_D:{cfg['alpha']}_{cfg['eo_mode_d']}"
+        f"_D:{cfg['alpha']}"
     )
 
     if cfg["use_wandb"]:
