@@ -30,23 +30,11 @@ MODEL_STYLES = {
 
 
 def _reset_seed(fold, seed=SEED):
-    """
-    Reimposta lo stato RNG prima di ogni training, in modo DETERMINISTICO e
-    dipendente solo dal fold (non da quanti training sono gia' stati fatti).
-
-    Senza questo, il seed viene impostato una volta sola all'avvio e ogni
-    training consuma lo stream RNG: run_cv e run_grid_search partono quindi da
-    stati diversi e producono modelli DIVERSI a parita' di iperparametri
-    (pesi iniziali diversi -> soglie diverse -> metriche diverse). Questo
-    rendeva non confrontabili i numeri di cv_results.csv con quelli della grid
-    search, e non riproducibile il singolo esperimento.
-    """
-    import torch
-    s = seed + 1000 * fold
-    np.random.seed(s)
-    torch.manual_seed(s)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
     if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(s)
+        torch.cuda.manual_seed_all(seed)
+
 
 
 # Split definition: Build the train/val/test folds once and return them as a list of

@@ -9,9 +9,8 @@
 # and SNR (How strong is the signal compared to the noise) = "low" (to financial domain)
 # =============================================================================
 
-
 create_matsigma <- function(){
-  matsigma <- .7 * diag(6) + matrix(.2, 6, 6)
+  matsigma <- .7 * diag(6) + matrix(.05, 6, 6)
   # to make the first two variables time-independent
   matsigma[1, ] <- c(1, 0, 0, 0, 0, 0)
   matsigma[2, ] <- c(0, 1, 0, 0, 0, 0) 
@@ -19,13 +18,13 @@ create_matsigma <- function(){
 }
 
 create_matsigma_by_group <- function(S){
-  # S=0: HIGH SIGNAL matrix(.2, 6, 6) 
-  matsigma_S0 <- .7 * diag(6) + matrix(.2, 6, 6)
+  # S=0: coupling inter-feature forte
+  matsigma_S0 <- .7 * diag(6) + matrix(.05, 6, 6)
   matsigma_S0[1,] <- c(1,0,0,0,0,0)
   matsigma_S0[2,] <- c(0,1,0,0,0,0)
   
-  # S=1: LOW SIGNAL matrix(.05, 6, 6)
-  matsigma_S1 <- .9 * diag(6) + matrix(.05, 6, 6)
+  # S=1: coupling inter-feature debole
+  matsigma_S1 <- .6 * diag(6) + matrix(.025, 6, 6)
   matsigma_S1[1,] <- c(1,0,0,0,0,0)
   matsigma_S1[2,] <- c(0,1,0,0,0,0)
   

@@ -313,8 +313,6 @@ def run_fairness_analysis(
 
     # adTPR / adFPR (solo M_DYNAMIC)
     res_adt = compute_adTPR_adFPR(y_dynamic, ybin_dynamic, sens_dynamic, lmk_vals)
-    print("\n--- adTPR / adFPR ---")
-    print(f"  M_DYNAMIC    adTPR={res_adt['adTPR']:.4f}  adFPR={res_adt['adFPR']:.4f}")
 
     df_dyn_lmk = pd.DataFrame(dyn_rows)
     df_dyn_lmk.to_csv(out_dir / "fairness_dynamic_by_landmark.csv", index=False)
