@@ -593,6 +593,7 @@ def main():
             bin_times=dynamic_data["bin_time_vals"],
             feat_names=dynamic_data["feature_names"],
             delta=cfg.get("delta", 1), device=DEVICE,
+            t_min=t_min, t_max=t_max, 
             run_tag=run_tag,
        )
        plot_tradeoff(df_grid, out_dir=out_dir, run_tag=run_tag)

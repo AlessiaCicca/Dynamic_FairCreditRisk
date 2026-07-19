@@ -626,6 +626,7 @@ def run_grid_search(
     n_bins=None, val_size=0.5, split_seed=SEED,
     splits_static=None, splits_dynamic=None,
     bin_times=None, feat_names=None, delta=None, device="cpu",
+    t_min=0.0, t_max=48.0,  
     out_dir=Path("outputs"), run_tag="run",
 ):
 
@@ -646,7 +647,8 @@ def run_grid_search(
     print( "\nGRID SEARCH — M_STATIC\n" + "=" * 60)
     df_s = run(X_static, y_static, grp_static, sens_static, splits_static, group_names,
                model_name="static", is_dynamic=False, eo_mode_d=eo_mode_d,
-               grid_search=True, coefs=betas)
+               grid_search=True, coefs=betas,
+               t_min=t_min, t_max=t_max) 
     df_s["model"] = "M_STATIC"
     for _, row in df_s.iterrows():
         print(f"  beta={row['coef']:.2f}  AUC={row['auc_mean']:.4f}  "
@@ -660,7 +662,8 @@ def run_grid_search(
                n_bins=n_bins, collapse_pdh=True, is_dynamic=True,
                eo_mode_d=eo_mode_d, schedule_mode_d=schedule_mode_d,
                grid_search=True, coefs=alphas,
-               bin_times=bin_times, feat_names=feat_names, delta=delta, device=device)
+               bin_times=bin_times, feat_names=feat_names, delta=delta, device=device,
+               t_min=t_min, t_max=t_max) 
     df_d["model"] = "M_DYNAMIC"
     for _, row in df_d.iterrows():
         print(f"  alpha={row['coef']:.2f}  AUC={row['auc_mean']:.4f}  "
