@@ -14,15 +14,15 @@ SEED = 42
 
 # Fairness penalty coefficients 
 BETA  = 0   # M_STATIC  EO penalty weight
-ALPHA = 0.7 # M_DYNAMIC EO penalty weight
+ALPHA = 0 # M_DYNAMIC EO penalty weight
 
 # EO penalty mode
 # Options: "mean" | "weighted" | "trend_aware"
-EO_MODE_D = "trend_aware"   # dynamic model
+EO_MODE_D = "mean"   # dynamic model
 
 # Time schedule mode (alpha_schedule)
 # Options: "flat" | "decay" | "growth" | "u_shaped"  | "n_shaped" 
-SCHEDULE_MODE_D = "n_shaped"
+SCHEDULE_MODE_D = "flat"
 
 # MLP architecture 
 HIDDEN1  = 64
@@ -107,6 +107,6 @@ GRID_ALPHAS = [0.0, 0.05, 0.1, 0.15 , 0.2, 0.25, 0.3, 0.5, 0.7]
 
 
 # W&B
-USE_WANDB    = False
+USE_WANDB    = True
 WANDB_ENTITY = "alessia-ciccaglione02-"
 WANDB_PROJECT = "ThesisFairness"
