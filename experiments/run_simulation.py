@@ -365,11 +365,15 @@ def main():
     out_dir = Path(args.out_dir) if args.out_dir else \
               Path("outputs") / "simulation" / args.scenario
     out_dir.mkdir(parents=True, exist_ok=True)
-
+    '''
     run_tag = (
-        f"simulation_high_{args.scenario}_{cfg['eo_mode_d']}"
+        f"simulation_low_{args.scenario}_{cfg['eo_mode_d']}"
         f"_S:{cfg['beta']}"
         f"_D:{cfg['alpha']}"
+    )
+    '''
+    run_tag = (
+        f"simulation_low_{args.scenario}_{cfg['eo_mode_d']}_baseline"
     )
 
     if cfg["use_wandb"]:
@@ -389,12 +393,14 @@ def main():
               "n_epochs":        N_EPOCHS,
               "lr":              LR,
               "pw_clip":         PW_CLIP,
+              "seed": SEED,
           }
       )
 
     print(f"\n{'='*60}")
     print(f"  Scenario : {args.scenario}")
     print(f"  Data dir : {args.data_dir}")
+    print(f"  Seed      :  {SEED}")
     print(f"{'='*60}\n")
 
     # Load raw data
