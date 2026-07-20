@@ -367,9 +367,9 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
 
     run_tag = (
-        f"simulation_{args.scenario}"
+        f"simulation_high_{args.scenario}_{cfg['eo_mode_d']}"
         f"_S:{cfg['beta']}"
-        f"_D:{cfg['alpha']}_{cfg['eo_mode_d']}"
+        f"_D:{cfg['alpha']}"
     )
 
     if cfg["use_wandb"]:
@@ -571,7 +571,6 @@ def main():
         if sep_plot.exists():
             wandb.log({"fairness_separation_plot": wandb.Image(str(sep_plot))})
 
-        wandb.finish()
 
     # Grid search
     if args.grid_search:
@@ -597,6 +596,17 @@ def main():
             run_tag=run_tag,
        )
        plot_tradeoff(df_grid, out_dir=out_dir, run_tag=run_tag)
+       if cfg["use_wandb"]:
+            
+        df_grid.to_csv(out_dir / "grid_search_results.csv", index=False)
+        
+        for img_path in out_dir.glob(f"*{run_tag}*.png"):
+            wandb.log({f"grid_search/{img_path.stem}": wandb.Image(str(img_path))})
+        
+
+    if cfg["use_wandb"]:
+      import wandb
+      wandb.finish()
 
     print(f"\n All outputs saved in: {out_dir}")
 
