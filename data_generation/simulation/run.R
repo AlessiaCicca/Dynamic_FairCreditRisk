@@ -11,6 +11,9 @@ source("genvar.R")                   # covariate generation (VAR process)
 source("timevarying_gnrt.R")         # continuous survival time generation
 source("traindtv_autocorr_gnrt.R")   # discrete-time training data generation
 
+set.seed(42)
+
+
 # --- Simulation setup ---
 matsigma  <- create_matsigma()
 scenarios <- c("fair", "direct", "proxy", "temporal")
@@ -26,6 +29,7 @@ dir.create(run_folder)
 cat("Output folder:", run_folder, "\n")
 
 for (sc in scenarios) {
+  set.seed(42)
   result <- traindtv_autocorr_gnrt(nsub = 25000, matsigma = matsigma, scenario = sc)
   
   # --- Compute event counts and percentages by group S ---

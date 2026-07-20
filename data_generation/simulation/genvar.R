@@ -132,7 +132,8 @@ genvar <- function(nsub = 1000,
     time_idx <- rep(1:nperiod, times = nsub)
     for (jj in 1:ncov) {
       if (Gamma_vec[jj] != 0) {
-        Data[, jj] <- Data[, jj] + Gamma_vec[jj] * S_rep * log(time_idx)
+        time_w   <- log(time_idx) / log(nperiod)
+        Data[, jj] <- Data[, jj] + Gamma_vec[jj] * S_rep * time_w
       }
     }
   }
