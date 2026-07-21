@@ -365,15 +365,11 @@ def main():
     out_dir = Path(args.out_dir) if args.out_dir else \
               Path("outputs") / "simulation" / args.scenario
     out_dir.mkdir(parents=True, exist_ok=True)
-    '''
+
     run_tag = (
         f"simulation_low_{args.scenario}_{cfg['eo_mode_d']}"
         f"_S:{cfg['beta']}"
         f"_D:{cfg['alpha']}"
-    )
-    '''
-    run_tag = (
-        f"simulation_low_{args.scenario}_{cfg['eo_mode_d']}_baseline"
     )
 
     if cfg["use_wandb"]:
