@@ -1,6 +1,5 @@
 """
-Global configuration for the project.
-All parameters are defined here and imported by experiments and src modules.
+Global configuration for the project: all parameters are defined here.
 
 """
 
