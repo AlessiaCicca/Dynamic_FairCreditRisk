@@ -1,24 +1,13 @@
-# =========================
-# R simulation outputs
-# =========================
 data_generation/simulation/run_*/
 outputs/
 wandb/
-
-# CSV e dati generati
 *.csv
 *.xlsx
-
-# R
 .Rhistory
 .RData
 .Rproj.user/
-
-# Python / Colab
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
-
-# OS
 .DS_Store
 Thumbs.db
