@@ -12,11 +12,9 @@ import pandas as pd
 def _safe_trapz(sub, time_col, metric, min_samples):
     # Sort by time column to ensure correct ordering for integration
     sub = sub.copy().sort_values(time_col)
-
     # Remove time points with too few samples per group
     if "n_group_min" in sub.columns:
         sub = sub[sub["n_group_min"] >= min_samples]
-
     # Remove rows where the metric is NaN
     sub = sub.dropna(subset=[metric])
   
@@ -29,15 +27,13 @@ def _safe_trapz(sub, time_col, metric, min_samples):
     v = sub[metric].values.astype(float)
   
     # Normalize time to [0, 1] so results are comparable across different time ranges
-    t_norm = (t - t.min()) / (t.max() - t.min() + 1e-9)
+    t_norm = (t - t.min()) / (t.max() - t.min() )
   
     return float(np.trapezoid(v, t_norm))
 
 
 # Simulation: single sensitive attribute 
-def auc_fairness_single_attr(
-    df_dynamic, df_static_agg,
-    time_col_dyn="landmark",
+def auc_fairness_single_attr( df_dynamic, df_static_agg, time_col_dyn="landmark",
     min_samples_per_group=20,
 ):
     metric     = "separation"
