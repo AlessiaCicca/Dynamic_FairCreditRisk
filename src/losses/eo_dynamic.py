@@ -1,8 +1,6 @@
 import torch
 
-
 def alpha_schedule(time_val, t_min=0, t_max=48, mode="u_shaped"):
-
     t_norm = (time_val - t_min) / (t_max - t_min + 1e-9)
     if mode == "decay":
         g = 10.0 - 9.0 * t_norm                   
@@ -15,35 +13,40 @@ def alpha_schedule(time_val, t_min=0, t_max=48, mode="u_shaped"):
     elif mode == "n_shaped":
         g = 1.0 + 9.0 * (1 - abs(2 * t_norm - 1)) 
     else:
-        raise ValueError(mode)
-
+        print(f"Error {mode}")
     return g 
 
 
-def _per_landmark_gaps(pred, sens, true, time_use, already_prob,
+def per_landmark_gaps(pred, sens, true, time_use, already_prob,
                        n_pos_min, current_epoch, time_schedule_mode,
                        t_min, t_max, eps):
     gaps = []
-    # Loop on ordered landmakr 
+    # Loop on ordered landmark 
     for t in torch.sort(torch.unique(time_use)).values:
+        # mask = time masking
         mask = time_use == t                      
         if mask.sum().item() == 0:
             continue
-
-        lp = pred[mask]                            # predictions
-        s  = sens[mask]                            # sensAttribute
-        lt = true[mask]                            # true value
+        
+        lp = pred[mask] # predictions
+        s = sens[mask] # sensAttribute
+        lt = true[mask] # true value
 
         # Consider only subject with valid sensitive attribute
         valid = ~torch.isnan(s)                    
         if valid.sum() == 0:
             continue
+        # Ensure that lp represents a probability
         lp = lp[valid] if already_prob else torch.sigmoid(lp[valid])
-        s  = s[valid]; lt = lt[valid]
+        
+        s  = s[valid]
+        lt = lt[valid]
 
-        # Soft prediction
-        pos = lt; neg = 1.0 - lt            
-        s1  = s;  s0  = 1.0 - s            
+        # Group masks (s1/s0) and true label masks (pos/neg)
+        pos = lt
+        neg = 1.0 - lt         
+        s1 = s
+        s0 = 1.0 - s            
 
         # Counting process
         npos_s1 = torch.sum(s1 * pos).item()
@@ -56,7 +59,7 @@ def _per_landmark_gaps(pred, sens, true, time_use, already_prob,
         if torch.unique(s).shape[0] < 2 or torch.unique(lt).shape[0] < 2:
             continue
 
-        # FPR e FNR soft for each groups
+        # FPR e FNR soft (lp) for each groups
         fpr_s1 = torch.sum(lp * s1 * neg) / (torch.sum(s1 * neg) + eps)
         fpr_s0 = torch.sum(lp * s0 * neg) / (torch.sum(s0 * neg) + eps)
         fnr_s1 = torch.sum((1 - lp) * s1 * pos) / (torch.sum(s1 * pos) + eps)
@@ -66,41 +69,30 @@ def _per_landmark_gaps(pred, sens, true, time_use, already_prob,
         fnr_gap = torch.abs(fnr_s1 - fnr_s0)
         if not torch.isfinite(fpr_gap + fnr_gap):
             continue
-
+        # Compute the alpha_schedule for landmark t -> representing the relevant of it on the timeline
         a_t = alpha_schedule(time_val=t.item(), t_min=t_min, t_max=t_max,mode=time_schedule_mode,)
-        gaps.append({
-            "fpr": fpr_gap, "fnr": fnr_gap,
-            "alpha": a_t, "n": mask.sum().float(),
-        })
+        gaps.append({"fpr": fpr_gap, "fnr": fnr_gap,"alpha": a_t, "n": mask.sum().float()})
     return gaps
 
 
-def equalized_odds_loss_dynamic(
-    label_pred, sensitive, label_true, time_vals,
-    mode="trend_aware",
-    min_group_frac=0.01,
-    current_epoch=0,
-    time_schedule_mode="flat",
-    group_idx=None,
-    n_pos_min=5,
-    t_min=0, t_max=48,   
-):
+def equalized_odds_loss_dynamic(label_pred, sensitive, label_true, time_vals,mode="trend_aware",min_group_frac=0.01,
+    current_epoch=0,time_schedule_mode="flat",group_idx=None,n_pos_min=5,t_min=0, t_max=48):
 
     eps = 1e-10
     device = label_pred.device
 
     if group_idx is not None:
-        p = torch.sigmoid(label_pred)                       # hazard per bin
-        n_groups = int(group_idx.max().item()) + 1       
+        p = torch.sigmoid(label_pred)                       # Form logit to hazard per bin
+        n_groups = int(group_idx.max().item()) + 1          # Assign index for (subject - landmark)
 
-        log_surv = torch.zeros(n_groups, device=device).index_add_(
-            0, group_idx, torch.log(1.0 - p + eps))
+        # Compute Survival Probability and Default Probability
+        log_surv = torch.zeros(n_groups, device=device).index_add_(0, group_idx, torch.log(1.0 - p + eps))
         pred_use = 1.0 - torch.exp(log_surv)           
 
-        true_use = torch.zeros(n_groups, device=device).index_add_(
-            0, group_idx, label_true.float()).clamp(max=1.0)
-
+        # True label and sensitive attribute
+        true_use = torch.zeros(n_groups, device=device).index_add_(0, group_idx, label_true.float()).clamp(max=1.0)
         sens_use = torch.full((n_groups,), float("nan"), device=device)
+        
         vm = ~torch.isnan(sensitive)
         if vm.any():
             sens_use[group_idx[vm]] = sensitive[vm].float()
@@ -109,22 +101,20 @@ def equalized_odds_loss_dynamic(
         time_use[group_idx] = time_vals.float()
         already_prob = True                                
     else:
-         pred_use, sens_use, true_use, time_use = (
-                label_pred, sensitive, label_true, time_vals)
+         pred_use, sens_use, true_use, time_use = (label_pred, sensitive, label_true, time_vals)
          already_prob = False
 
-    gaps = _per_landmark_gaps(
-      pred_use, sens_use, true_use, time_use, already_prob,
-      n_pos_min, current_epoch, time_schedule_mode,
-      t_min, t_max, eps)
+    # Retrieve statistics per landmark -> gaps=[fpr, fnr, a_t, n]
+    gaps = per_landmark_gaps(pred_use, sens_use, true_use, time_use, already_prob,n_pos_min, current_epoch, time_schedule_mode,t_min, t_max, eps)
 
     if len(gaps) == 0:
         return torch.tensor(0.0, device=device)            
-
+   
     fpr_stack = torch.stack([g["fpr"] for g in gaps])
     fnr_stack = torch.stack([g["fnr"] for g in gaps])
-    eo_stack  = torch.stack([g["alpha"] * (g["fpr"] + g["fnr"]) for g in gaps])
 
+    # List of eo per landmarks -> [eo_1, eo_2 .. ]
+    eo_stack  = torch.stack([g["alpha"] * (g["fpr"] + g["fnr"]) for g in gaps])
 
     if mode == "mean":
         return eo_stack.mean()                            
@@ -133,20 +123,22 @@ def equalized_odds_loss_dynamic(
         return (eo_stack * (w / w.sum())).sum()
 
     if mode == "trend_aware":
+        # At least 2 landmarks are required to trend aggregation
         if fpr_stack.shape[0] < 2:
             return torch.tensor(0.0, device=device)
 
+        # Ignore first landmark because is not possible compute preceding
         base_fpr = fpr_stack[1:]          
         base_fnr = fnr_stack[1:]
 
+        # Take only increase of disparity
         growth_fpr = torch.clamp(fpr_stack[1:] - fpr_stack[:-1], min=0)
         growth_fnr = torch.clamp(fnr_stack[1:] - fnr_stack[:-1], min=0)
        
-        #alpha_stack = torch.stack([g["alpha"] for g in gaps])
         alpha_stack = torch.tensor([g["alpha"] for g in gaps], device=device, dtype=base_fpr.dtype)             
         a_k = alpha_stack[1:]             
 
         eo_trend = (a_k * (base_fpr + 5 * growth_fpr + base_fnr + 5 * growth_fnr)).mean()
         return eo_trend
 
-    raise ValueError(f"mode={mode} unknown")
+    print(f"mode={mode} unknown")
