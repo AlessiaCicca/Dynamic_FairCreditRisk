@@ -7,15 +7,14 @@
 # =============================================================================
 
 
-traindtv_autocorr_gnrt <- function(nsub = 200, 
-                                   matsigma = NULL,
+traindtv_autocorr_gnrt <- function(nsub = 200, matsigma = NULL,
                                    scenario = c("fair", "direct", "proxy", "temporal")){
   
   nstime <- 1000
   nperiod <- 24
 
 
-  # chngpt defines the 12 discrete time interval boundaries always computed on "fair" to
+  # chngpt defines the 24 discrete time interval boundaries always computed on "fair" to
   # ensure breakpoints are stable and comparable
   RET <- tvstimegnrt(nsub = nstime,
                      scenario = "fair",      
@@ -26,13 +25,11 @@ traindtv_autocorr_gnrt <- function(nsub = 200,
 
   # In the credit risk context, survival corresponds to a borrower not defaulting on their loan. Since default is a rare event in real-world credit portfolios,
   # a high censoring rate of 80% is more realistic, meaning that the majority of subjects will not experience the event within the observation window. 
-  chngpt <- findsurvint(y = sort(RET$survtime),
-                        nper = nperiod,
-                        rate = 0.80)
+  chngpt <- findsurvint(y = sort(RET$survtime), nper = nperiod,rate = 0.80)
   rm(RET)
   gc()
 
-  # --- Initialize data matrix ---
+  # Initialize data matrix 
   Data <- as.data.frame(matrix(NA, nperiod * nsub, 14))
   names(Data) <- c("ID", "X1", "X2", "X3", "X4", "X5", "X6", "S",
                    "StopT", "Time", "Event", "Theta", "Su", "h")
