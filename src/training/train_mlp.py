@@ -1,7 +1,4 @@
-"""
-Training loop for M_STATIC and M_DYNAMIC models.
-Imports MLP from src.models.mlp and loss functions from src.losses.
-"""
+# Training loop for M_STATIC and M_DYNAMIC models.
 
 import numpy as np
 import pandas as pd
@@ -10,101 +7,71 @@ import torch.nn as nn
 import torch.optim as optim
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import roc_auc_score
-
 from src.models.mlp import MLP
 from src.losses.eo_static import equalized_odds_loss
 from src.losses.eo_dynamic import equalized_odds_loss_dynamic
 
-from config import (WEIGHT_DECAY, PATIENCE, N_EPOCHS,LR, PW_CLIP)
+from config import WEIGHT_DECAY, PATIENCE, N_EPOCHS,LR, PW_CLIP
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-
-#   Train an MLP with fairness regularisation
-def train_mlp(
-    Xtr,
-    ytr,
-    Xte,
-    yte,
-    sensitive_tr=None,
-    time_tr=None,
-    subj_ids_tr=None,
-    model_name="",
-    hidden1=64,
-    hidden2=32,
-    dropout=0.3,
-    lr=LR,
-    weight_decay=WEIGHT_DECAY,
-    n_epochs=N_EPOCHS,
-    patience=PATIENCE,
-    min_lr=1e-5,
-    pw_clip=PW_CLIP,
+def train_mlp(Xtr,ytr,Xte,yte,sensitive_tr=None,time_tr=None,
+    subj_ids_tr=None,model_name="",hidden1=64,hidden2=32,
+    dropout=0.3,lr=LR,weight_decay=WEIGHT_DECAY,
+    n_epochs=N_EPOCHS,patience=PATIENCE,min_lr=1e-5,pw_clip=PW_CLIP,
     beta=0.0,    # M_STATIC
     alpha=0.0,   # M_DYNAMIC
-    eo_mode_d="mean",
-    schedule_mode_d="flat",
-    t_min=0.0, t_max=48.0,   
-    verbose=False,
-):
+    eo_mode_d="mean",schedule_mode_d="flat",t_min=0.0, t_max=48.0,verbose=False):
 
 
     # Preprocessing -> StandardScaler (mean=0 and std=1) due to the different scale of the features
     # Fit on the training set and transform on the test set
+    # NB: float32 enforced for memory constraint
     scaler = StandardScaler()
-    Xtr_s = np.nan_to_num(scaler.fit_transform(Xtr).astype(np.float32),
-        nan=0., posinf=5., neginf=-5.,)
-    Xte_s = np.nan_to_num(scaler.transform(Xte).astype(np.float32),
-        nan=0., posinf=5., neginf=-5.,)
+    Xtr_s = np.nan_to_num(scaler.fit_transform(Xtr).astype(np.float32))
+    Xte_s = np.nan_to_num(scaler.transform(Xte).astype(np.float32))
 
 
-    # PyTorch tensor conversion
     X_train = torch.tensor(Xtr_s, device=DEVICE)
     y_train = torch.tensor(ytr.astype(np.float32), device=DEVICE)
     X_test  = torch.tensor(Xte_s, device=DEVICE)
-    sens_train = ( torch.tensor(sensitive_tr.astype(np.float32), device=DEVICE)
-        if sensitive_tr is not None else None)
-    time_train = (torch.tensor(time_tr.astype(np.float32), device=DEVICE)
-        if time_tr is not None else None)
+    sens_train = ( torch.tensor(sensitive_tr.astype(np.float32), device=DEVICE) if sensitive_tr is not None else None)
+    time_train = (torch.tensor(time_tr.astype(np.float32), device=DEVICE) if time_tr is not None else None)
 
     # Class-weight: the pos_weight gives more weight to the minority class (default) 
-    # during training, and the clip avoids exaggerating this weight when the imbalance is extreme.
+    # during training and the clip avoids exaggerating this weight when the imbalance is extreme.
     n_pos = max((ytr == 1).sum(), 1)
     n_neg = max((ytr == 0).sum(), 1)
-    pw    = float(np.clip(n_neg / n_pos, 1.0, pw_clip))   
+    pw = float(np.clip(n_neg / n_pos, 1.0, pw_clip))   
     pos_w = torch.tensor([pw], dtype=torch.float32, device=DEVICE)
 
     # Model Initialization
-    model     = MLP(X_train.shape[1], hidden1, hidden2, dropout).to(DEVICE)
+    model = MLP(X_train.shape[1], hidden1, hidden2, dropout).to(DEVICE)
     model.init_bias(prev=float(ytr.mean()))
     criterion = nn.BCEWithLogitsLoss(pos_weight=pos_w)
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", patience=patience, factor=0.5, min_lr=min_lr)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau( optimizer, mode="min", patience=patience, factor=0.5, min_lr=min_lr)
 
-    apply_fair_static  = (model_name == "static")        and (sens_train is not None)
-    apply_fair_dynamic = (model_name == "dynamic")       and (sens_train is not None) and (time_train is not None)
+    apply_fair_static  = (model_name == "static") and (sens_train is not None)
+    apply_fair_dynamic = (model_name == "dynamic") and (sens_train is not None) and (time_train is not None)
 
     # Training loop
     model.train()  
-    # Mappa (soggetto, landmark) -> id gruppo, per il collapse PD-12 nella loss
+    # group_idx is used to map a row bin based to a pair (subject, landmark)
     group_idx = None
     if apply_fair_dynamic and (subj_ids_tr is not None) and (time_tr is not None):
-        gkey = (
-            pd.DataFrame({"s": np.asarray(subj_ids_tr), "t": np.asarray(time_tr)})
-            .groupby(["s", "t"], sort=False)
-            .ngroup()
-            .to_numpy()
-        )
+        gkey = (pd.DataFrame({"s": np.asarray(subj_ids_tr), "t": np.asarray(time_tr)})
+            .groupby(["s", "t"], sort=False).ngroup().to_numpy())
         group_idx = torch.tensor(gkey, dtype=torch.long, device=DEVICE)
     for epoch in range(n_epochs):
         # Resets the accumulated gradients from the previous step
         optimizer.zero_grad()
         # Forward pass — passes all data through the network and gets the logits
-        logits  = model(X_train)
+        logits = model(X_train)
         # Binary Cross Entropy
-        L_bce   = criterion(logits, y_train)
+        L_bce = criterion(logits, y_train)
         # Initialization of the fairness loss
-        L_eo    = torch.tensor(0.0, device=DEVICE)
+        L_eo = torch.tensor(0.0, device=DEVICE)
         # Warmup let BCE learn first
         apply_eo = epoch > 20   
 
@@ -134,7 +101,8 @@ def train_mlp(
         optimizer.step()
         # Learning rate update
         scheduler.step(loss.detach())
-
+        
+        # Print information to analyse the training in the console
         if verbose and (epoch % 20 == 0 or epoch == n_epochs - 1):
             with torch.no_grad():
                 # Converts logits to probabilities
@@ -165,6 +133,7 @@ def train_mlp(
     model.eval()
     with torch.no_grad():
         # Forward Pass + Converts logits to probabilities
+        # Here p_te and p_tr are at bin level, meaning the hazard, the PD is computed for evaluation and penalty
         p_te = torch.sigmoid(model(X_test)).cpu().numpy()
         p_tr = torch.sigmoid(model(X_train)).cpu().numpy()
     return p_te, p_tr, model, scaler
