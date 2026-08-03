@@ -56,14 +56,15 @@ def find_best_threshold(y_true, p):
 def collapse_fold_full_horizon(model, scaler, X, y, groups, lmk, bin_times,
                                  feat_names, idx, n_bins, delta, device, complete_only=True):
 
-    
+                                     
     spl_idx = [i for i, f in enumerate(feat_names) if str(f).startswith("spl_")]
     if not spl_idx:
-        print("Nessuna colonna 'spl_*' in feature_names")
+        print("None spline columns in feature")
         
     # d is a DataFrame at bin level - g/out are at landmark level
     d = pd.DataFrame({"row": idx,"id":  groups[idx],"L":   lmk[idx],"ev":  y[idx],})                                    
     g  = d.groupby(["id", "L"], sort=False)
+    # First row of each group of n_bins
     out = pd.DataFrame({"yh":  g["ev"].max(),"n":   g.size(),"row": g["row"].first()}).reset_index()
 
     # Require all bins or default - discard censoring                              
@@ -74,15 +75,17 @@ def collapse_fold_full_horizon(model, scaler, X, y, groups, lmk, bin_times,
 
     # Recreate n_bins row
     n_groups = len(out)
-    X_rep  = X[out["row"].to_numpy()]
-    X_full = np.repeat(X_rep, n_bins, axis=0)
+    X_rep  = X[out["row"].to_numpy()]  # Single row
+    X_full = np.repeat(X_rep, n_bins, axis=0) # n_bins rows
 
-    # Retrieve real spline
+    # Retrieve real spline from original features -> from any other loans with all bins
+    # Covariate are at L -> spline are the only features that vary with bin_time 
     bt_to_spl = {}
     for bt_val in np.unique(bin_times):
         j = np.where(bin_times == bt_val)[0][0]
         bt_to_spl[bt_val] = X[j, spl_idx]
 
+    # L_rep landmark indicators |  j_rep bin indicators | bt_target bin_time
     L_rep  = np.repeat(out["L"].to_numpy(), n_bins)
     j_rep = np.tile(np.arange(n_bins), n_groups)
     bt_target = L_rep + delta * j_rep
@@ -91,14 +94,17 @@ def collapse_fold_full_horizon(model, scaler, X, y, groups, lmk, bin_times,
             X_full[k, spl_idx] = bt_to_spl[bt_val]
 
     Xs = scaler.transform(X_full).astype(np.float32)
-    Xs = np.nan_to_num(Xs, nan=0., posinf=5., neginf=-5.)
+    Xs = np.nan_to_num(Xs)
+
+    # Hazard prediction on Xs                  
     model.eval()
     with torch.no_grad():
         h = torch.sigmoid(model(torch.tensor(Xs, device=device))).cpu().numpy()
     h = np.clip(h, 1e-7, 1 - 1e-7)
-
+    # Compute Survival Prob. and PD
     surv = np.prod(1.0 - h.reshape(n_groups, n_bins), axis=1)
     out["pdh"] = 1.0 - surv
+    # Return (id, landmark, probDefault, trueLabel, trueNbins)
     return out[["id", "L", "pdh", "yh", "n"]]
 
 
@@ -121,12 +127,11 @@ def fit_predict(splits, X, y, groups, sensitive,
     thresholds = []
     model_last = scaler_last = None
     fold_models = []   # (model, scaler) per fold
-    
+    # LOOP on fold
     for fold, (tr_idx, val_idx, test_idx) in enumerate(splits):
         te_idx = np.concatenate([val_idx, test_idx])
         reset_seed(fold)
-
-        # train MLP on the training fold, predict on the whole held-out (val + test)
+        # train MLP on the training fold, predict on (val + test)
         p_te, p_tr, model, scaler = train_mlp(
             X[tr_idx], y[tr_idx], X[te_idx], y[te_idx],
             sensitive_tr=sensitive[tr_idx] if sensitive is not None else None,
@@ -147,6 +152,7 @@ def fit_predict(splits, X, y, groups, sensitive,
             val_pdh_th = collapse_fold_full_horizon(
                 model, scaler, X, y, groups, time_arr, bin_times, feat_names,
                 val_idx, n_bins, delta, device)
+            # find the optimal threshold on val set
             thresholds.append(find_best_threshold(val_pdh_th["yh"], val_pdh_th["pdh"]))
         else:
             p_val_th = p_te[[pos[i] for i in val_idx]]
@@ -163,7 +169,7 @@ def fit_predict(splits, X, y, groups, sensitive,
                 pm = val_pdh["pdh"].mean()
             else:
                 val_pos  = [pos[i] for i in val_idx]
-                p_val    = p_te[val_pos]
+                p_val  = p_te[val_pos]
                 auc_fold = (roc_auc_score(y[val_idx], p_val)
                             if len(np.unique(y[val_idx])) > 1 else float("nan"))
                 pm = p_val.mean()
@@ -171,55 +177,54 @@ def fit_predict(splits, X, y, groups, sensitive,
                   f"  |  AUC (val): {auc_fold:.4f}  |  th={thresholds[-1]:.5f}")
 
     return dict( oof_val=oof_val, oof_test=oof_test, oof_full=oof_full,
-        is_val=is_val, is_test=is_test,
-        threshold=float(np.mean(thresholds)),  fold_thresholds=thresholds,
+        is_val=is_val, is_test=is_test,threshold=float(np.mean(thresholds)),  fold_thresholds=thresholds,
         model_last=model_last, scaler_last=scaler_last,fold_models=fold_models)
 
 
 
-def fairness_per_fold(fp, splits, which, X, y, groups, time_arr, sensitive,
-                       group_names, th, n_bins, is_dyn,
-                       bin_times=None, feat_names=None, delta=None, device="cpu",
-                       use_fold_threshold=True):
+def fairness_per_fold(fp, splits, which, X, y, groups, time_arr, sensitive,group_names, th, n_bins, is_dyn,
+                       bin_times=None, feat_names=None, delta=None, device="cpu",use_fold_threshold=True):
     
-    NAN5 = (np.nan,) * 5
     if group_names is None:
-        return NAN5
+        return (np.nan,) * 5
 
     fold_ths = fp.get("fold_thresholds") if use_fold_threshold else None
 
+    # STATIC
     if not is_dyn:
         oof = fp["oof_val"] if which == "val" else fp["oof_test"]
         rows = []
+        # Retrive predictions and performe evaluation
         for k, (tr_idx, val_idx, test_idx) in enumerate(splits):
             idx = val_idx if which == "val" else test_idx
             if len(idx) == 0:
                 continue
+            # threshold of the fold
             th_k = fold_ths[k] if fold_ths is not None else th
             r = eval_static(oof[idx], y[idx], sensitive[idx], group_names, th_k)
             rows.append(r)
-        if not rows:
-            return NAN5
         arr = np.asarray(rows, dtype=float)
         return tuple(np.nanmean(arr, axis=0))
 
+    # Series( subjectID, sensitiveAttributes)           
     sens_by_id = pd.Series(sensitive, index=groups)
     sens_by_id = sens_by_id[~sens_by_id.index.duplicated(keep="first")]
 
+    # DYNAMIC                      
     rows = []
     for k, (tr_idx, val_idx, test_idx) in enumerate(splits):
         idx = val_idx if which == "val" else test_idx
         model, scaler = fp["fold_models"][k]
+        # Compute pdh
         coll = collapse_fold_full_horizon(
             model, scaler, X, y, groups, time_arr, bin_times, feat_names,
             idx, n_bins, delta, device)
         if len(coll) == 0:
             continue
+        # threshold of the fold
         th_k = fold_ths[k] if fold_ths is not None else th
         rows.append(eval_dynamic_from_pdh(coll, sens_by_id, group_names, th_k))
 
-    if not rows:
-        return NAN5
     arr = np.asarray(rows, dtype=float)
     return tuple(np.nanmean(arr, axis=0))
 
@@ -231,24 +236,26 @@ def run(X, y, groups, sensitive, splits, group_names,
         grid_search=False, coefs=None, verbose_folds=False,
         bin_times=None, feat_names=None, delta=None, device="cpu",
         **train_kwargs):
+            
 
     # for a combination of alpha and beta and call fit_predict for training 
-    def _one(alpha, beta):
+    def one(alpha, beta):
         fp = fit_predict(splits, X, y, groups, sensitive, time_arr, subj_ids,
                           model_name, alpha, beta, n_bins, collapse_pdh,
-                          verbose_folds=verbose_folds,
-                          bin_times=bin_times, feat_names=feat_names,
+                          verbose_folds=verbose_folds, bin_times=bin_times, feat_names=feat_names,
                           delta=delta, device=device, **train_kwargs)
+        
         th = fp["threshold"]
         val  = fairness_per_fold(fp, splits, "val",  X, y, groups, time_arr, sensitive, group_names, th, n_bins, is_dynamic,
                                   bin_times, feat_names, delta, device)
         test = fairness_per_fold(fp, splits, "test", X, y, groups, time_arr,
                                   sensitive, group_names, th, n_bins, is_dynamic, bin_times, feat_names, delta, device)
         fp["val"], fp["test"] = val, test
+        # fp contains predictions, trainSetting and metrics
         return fp
 
     if not grid_search:
-        r = _one(train_kwargs.pop("alpha", 0.0), train_kwargs.pop("beta", 0.0))
+        r = one(train_kwargs.pop("alpha", 0.0), train_kwargs.pop("beta", 0.0))
         auc_val, sep_auc_val, sep_mean_val, adtpr_val, adfpr_val = r["val"]
         auc_test, sep_auc_test, sep_mean_test, adtpr_test, adfpr_test = r["test"]
         
@@ -268,19 +275,17 @@ def run(X, y, groups, sensitive, splits, group_names,
     records = []
     coef_name = "alpha" if is_dynamic else "beta"
     results_cache = {}
-
-    def _eval_coef(c):
-        r = _one(c, 0.0) if is_dynamic else _one(0.0, c)
-        results_cache[c] = r
-        return r
-
-    fixed_th = None
-    if 0.0 in coefs:
-        fixed_th = _eval_coef(0.0)["threshold"]
-
+            
+    trained = {}
     for c in coefs:
-        r = results_cache[c] if c in results_cache else _eval_coef(c)
+        # Train on all coefficients
+        trained[c] = one(c, 0.0) if is_dynamic else one(0.0, c)
+    
+    fixed_th = trained[0.0]["threshold"] if 0.0 in trained else None
 
+    # Evaluation using the existing results stored in trained
+    for c in coefs:
+        r = trained[c]
         if fixed_th is not None:
             val_fixed = fairness_per_fold(r, splits, "val", X, y, groups, time_arr,sensitive, group_names, fixed_th, n_bins,
                                            is_dynamic, bin_times, feat_names, delta, device, use_fold_threshold=False)
@@ -289,7 +294,6 @@ def run(X, y, groups, sensitive, splits, group_names,
         else:
             val_fixed = (np.nan,) * 5
             test_fixed = (np.nan,) * 5
-
 
         sep_val_mobile = r["val"][1]
         sep_val_fixed = val_fixed[1]
@@ -308,8 +312,7 @@ def run(X, y, groups, sensitive, splits, group_names,
     return pd.DataFrame(records)
 
 
-# Run Cross_Validation
-# Final CV for one model at a fixed coefficient. 
+# Run Cross_Validation with performance
 def run_cv(X, y, groups, sensitive,time_arr=None, subj_ids=None,
            model_name="", n_splits=5, landmarks=None, collapse_pdh=False, n_bins=None, group_names=None, splits=None,
            val_size=0.5, split_seed=SEED, bin_times=None, feat_names=None, delta=None, device="cpu",**train_kwargs):
@@ -321,55 +324,42 @@ def run_cv(X, y, groups, sensitive,time_arr=None, subj_ids=None,
             time_arr=time_arr, subj_ids=subj_ids, model_name=model_name,
             n_bins=n_bins, collapse_pdh=collapse_pdh,
             is_dynamic=(time_arr is not None), grid_search=False, verbose_folds=True,
-            bin_times=bin_times, feat_names=feat_names, delta=delta, device=device,
-            **train_kwargs)
+            bin_times=bin_times, feat_names=feat_names, delta=delta, device=device,**train_kwargs)
 
 
     metrics_list = []
     for k, (tr_idx, val_idx, test_idx) in enumerate(splits):
         if collapse_pdh:
-            # full-horizon PD-H col modello DI QUESTO fold (no leakage)
+            # full-horizon PD-H
             model_k, scaler_k = r["fold_models"][k]
             te_pdh = collapse_fold_full_horizon(
                 model_k, scaler_k, X, y, groups, time_arr, bin_times, feat_names,
                 test_idx, n_bins, delta, device)
+            # Add performance metrics
             df_perf = perf_by_landmark(te_pdh["yh"].to_numpy().astype(int),
-                                        te_pdh["pdh"].to_numpy(),
-                                        te_pdh["L"].to_numpy())
-            metrics_list.append(dict(
-                AUC=integrate_curve(df_perf, "auc"),
-                Brier=integrate_curve(df_perf, "brier"),
-                Th=r["fold_thresholds"][k],
-            ))
+                                        te_pdh["pdh"].to_numpy(), te_pdh["L"].to_numpy())
+            metrics_list.append(dict(AUC=integrate_curve(df_perf, "auc"),
+                Brier=integrate_curve(df_perf, "brier"),Th=r["fold_thresholds"][k]))
         else:
-            metrics_list.append(metrics_all(y[test_idx].astype(int),
-                                            r["oof_test"][test_idx],
-                                            r["fold_thresholds"][k]))
+            metrics_list.append(metrics_all(y[test_idx].astype(int),r["oof_test"][test_idx],r["fold_thresholds"][k]))
 
     summary = agg_mean_sd(metrics_list)
     summary["Model"] = model_name.upper()
 
     oof_test_only = np.full(len(y), np.nan, dtype=np.float64)
     oof_test_only[r["is_test"]] = r["oof_test"][r["is_test"]]
-
     r["oof_preds"] = oof_test_only
     r["metrics"] = metrics_list
     r["summary"] = summary
     return r
 
 # Loop on alpha and beta list
-def run_grid_search(
-    X_static, y_static, grp_static, sens_static,
+def run_grid_search(X_static, y_static, grp_static, sens_static,
     X_dynamic, y_dynamic, grp_dynamic, sens_dynamic, lmk_vals,
-    group_names,
-    betas=None, alphas=None,
-    n_folds=5, eo_mode_d="mean", schedule_mode_d="flat",
+    group_names,betas=None, alphas=None, n_folds=5, eo_mode_d="mean", schedule_mode_d="flat",
     n_bins=None, val_size=0.5, split_seed=SEED,
-    splits_static=None, splits_dynamic=None,
-    bin_times=None, feat_names=None, delta=None, device="cpu",
-    t_min=0.0, t_max=48.0,  
-    out_dir=Path("outputs"), run_tag="run",
-):
+    splits_static=None, splits_dynamic=None, bin_times=None, feat_names=None, delta=None, device="cpu",
+    t_min=0.0, t_max=48.0,out_dir=Path("outputs"), run_tag="run"):
 
 
     if betas is None:
@@ -385,9 +375,9 @@ def run_grid_search(
     print( "\nGRID SEARCH — M_STATIC\n" + "=" * 60)
     df_s = run(X_static, y_static, grp_static, sens_static, splits_static, group_names,
                model_name="static", is_dynamic=False, eo_mode_d=eo_mode_d,
-               grid_search=True, coefs=betas,
-               t_min=t_min, t_max=t_max) 
+               grid_search=True, coefs=betas, t_min=t_min, t_max=t_max) 
     df_s["model"] = "M_STATIC"
+    # Plot results
     for _, row in df_s.iterrows():
         print(f"  beta={row['coef']:.2f}  AUC={row['auc_mean']:.4f}  "
               f"sep={row['separation_auc']:.4f}  "
@@ -422,18 +412,15 @@ def build_summary_table(cv_results):
         row["Model"] = name
         rows.append(row)
     df = pd.DataFrame(rows)
-    rename_map = {
-        "AUC_Mean": "AUC/iAUC Mean", "AUC_SD": "AUC/iAUC SD",
-        "Brier_Mean": "BS/IBS Mean", "Brier_SD": "BS/IBS SD",
-    }
+    rename_map = {"AUC_Mean": "AUC/iAUC Mean", "AUC_SD": "AUC/iAUC SD",
+        "Brier_Mean": "BS/IBS Mean", "Brier_SD": "BS/IBS SD"}
     df = df.rename(columns=rename_map)
     cols = ["Model", "AUC/iAUC Mean", "AUC/iAUC SD", "BS/IBS Mean", "BS/IBS SD"]
     return df[[c for c in cols if c in df.columns]]
 
 
 def plot_tradeoff(df_grid, out_dir, run_tag="run"):
-    static_base = df_grid[(df_grid["model"] == "M_STATIC") &
-                          (df_grid["coef"] == 0.0)]["auc_mean"].values
+    static_base = df_grid[(df_grid["model"] == "M_STATIC") & (df_grid["coef"] == 0.0)]["auc_mean"].values
     static_base = float(static_base[0]) if len(static_base) > 0 else 0.0
 
     fig, axes = plt.subplots(1, 2, figsize=(12, 6))
@@ -443,9 +430,9 @@ def plot_tradeoff(df_grid, out_dir, run_tag="run"):
                  fontsize=12, fontweight="bold", y=1.04)
 
     for ax, (model_name, style) in zip(axes, MODEL_STYLES.items()):
-        sub = df_grid[df_grid["model"] == model_name]\
-            .dropna(subset=["auc_mean", "separation_auc"])\
-            .sort_values("coef").reset_index(drop=True)
+        sub = df_grid[df_grid["model"] == model_name]
+        sub = sub.dropna(subset=["auc_mean", "separation_auc"])
+        sub = sub.sort_values("coef").reset_index(drop=True)
         if sub.empty:
             ax.set_title(f"{model_name} — no data")
             continue
@@ -481,8 +468,7 @@ def plot_tradeoff(df_grid, out_dir, run_tag="run"):
         ax.grid(alpha=0.2, linestyle="--")
 
         legend_handles = [
-            Line2D([0], [0], color=color, linewidth=2, marker=style["marker"],
-                   label="AUC val (solid)"),
+            Line2D([0], [0], color=color, linewidth=2, marker=style["marker"], label="AUC val (solid)"),
             Line2D([0], [0], color=color, linewidth=2, linestyle="--",
                    marker=style["marker"], alpha=0.55, label="Separation val, mobile threshold (dashed)"),
             Line2D([0], [0], color=color, linewidth=2, linestyle=":",
@@ -491,8 +477,7 @@ def plot_tradeoff(df_grid, out_dir, run_tag="run"):
         if model_name == "M_DYNAMIC":
             legend_handles.append(
                 Line2D([0], [0], color="gray", linestyle=":", linewidth=1.5,
-                       label=f"Static AUC baseline ({static_base:.3f})")
-            )
+                       label=f"Static AUC baseline ({static_base:.3f})"))
         ax.legend(handles=legend_handles, fontsize=8, loc="lower left", framealpha=0.9)
 
     plt.tight_layout()
