@@ -1,7 +1,6 @@
 """
 Match Freddie Mac origination data with HMDA demographic data.
 Produces matched_{YEAR}.csv with Freddie Mac variables + HMDA demographics.
-
 """
 
 import os
@@ -10,24 +9,15 @@ import glob
 import shutil
 import zipfile
 import argparse
-
 import numpy as np
 import pandas as pd
 
 
-# ── Column layout ─────────────────────────────────────────────────────────────
-
-FREDDIE_ORIG_COLS = [
-    "credit_score", "first_payment_date", "first_time_homebuyer",
-    "maturity_date", "msa", "mi_pct", "num_units", "occupancy_status",
-    "original_cltv", "original_dti", "original_upb", "original_ltv",
-    "original_interest_rate", "channel", "ppm_flag", "amortization_type",
-    "property_state", "property_type", "postal_code", "loan_sequence_number",
-    "loan_purpose", "original_loan_term", "num_borrowers", "seller_name",
-    "servicer_name", "super_conforming_flag", "pre_relief_refi_seq",
-    "special_eligibility", "relief_refi_indicator", "property_valuation",
-    "io_indicator", "mi_cancellation",
-]
+# Original columns of Freddie Mac dataset
+FREDDIE_ORIG_COLS = [ "credit_score", "first_payment_date", "first_time_homebuyer", "maturity_date", "msa", "mi_pct", "num_units", "occupancy_status",
+    "original_cltv", "original_dti", "original_upb", "original_ltv","original_interest_rate", "channel", "ppm_flag", "amortization_type",
+    "property_state", "property_type", "postal_code", "loan_sequence_number","loan_purpose", "original_loan_term", "num_borrowers", "seller_name",
+    "servicer_name", "super_conforming_flag", "pre_relief_refi_seq","special_eligibility", "relief_refi_indicator", "property_valuation","io_indicator", "mi_cancellation"]
 
 # Freddie Mac and HMDA encode the same information with different labels
 # Occupancy type: P=Primary (1), S=Secondary (2), I=Investment (3)
@@ -35,56 +25,32 @@ FREDDIE_OCC_MAP     = {"P": 1, "S": 2, "I": 3}
 # Loan purpose: P=Purchase (1), C=Cash-out refinance (32), N/R=No cash-out refinance (31)
 FREDDIE_PURPOSE_MAP = {"P": 1, "C": 32, "N": 31, "R": 31}
 
-MATCH_KEYS = [
-    "state_code", "msa", "loan_amount_r", "interest_rate",
-    "loan_term", "num_units", "occupancy_type", "loan_purpose",
-]
+# Definition of a set of variables for matching procedure based on literature
+MATCH_KEYS = ["state_code", "msa", "loan_amount_r", "interest_rate","loan_term", "num_units", "occupancy_type", "loan_purpose"]
 
-HMDA_DEMO_COLS = [
-    "derived_race",
-    "applicant_race_1", "applicant_race_2", "applicant_race_3",
-    "applicant_race_4", "applicant_race_5",
-    "co_applicant_race_1", "co_applicant_race_2", "co_applicant_race_3",
-    "co_applicant_race_4", "co_applicant_race_5",
-    "derived_sex", "applicant_sex", "co_applicant_sex",
-    "applicant_age", "co_applicant_age",
-    "applicant_age_above_62", "co_applicant_age_above_62",
-]
+HMDA_DEMO_COLS = ["derived_race","applicant_race_1", "applicant_race_2", "applicant_race_3","applicant_race_4", "applicant_race_5",
+    "co_applicant_race_1", "co_applicant_race_2", "co_applicant_race_3","co_applicant_race_4", "co_applicant_race_5","derived_sex", "applicant_sex", "co_applicant_sex",
+    "applicant_age", "co_applicant_age","applicant_age_above_62", "co_applicant_age_above_62"]
 
-HMDA_EXTRA_COLS = [
-    "activity_year", "lei", "action_taken", "purchaser_type", "loan_type",
-    "property_type", "lien_status", "reverse_mortgage",
-    "open_end_line_of_credit", "business_or_commercial",
-    "conforming_loan_limit", "derived_loan_product_type",
-    "derived_dwelling_category", "county_code", "census_tract",
-    "applicant_ethnicity_1", "co_applicant_ethnicity_1", "derived_ethnicity",
-    "income", "rate_spread", "hoepa_status", "total_loan_costs",
-    "origination_charges", "discount_points", "lender_credits",
-    "loan_to_value_ratio", "intro_rate_period", "negative_amortization",
-    "interest_only_payment", "balloon_payment",
-    "other_nonamortizing_features", "property_value",
-    "manufactured_home_secured_property_type",
-    "manufactured_home_land_property_interest",
-    "submission_of_application", "initially_payable_to_institution",
-    "aus_1", "denial_reason_1", "tract_population",
-    "tract_minority_population_percent",
-    "ffiec_msa_md_median_family_income", "tract_to_msa_income_percentage",
-    "tract_owner_occupied_units", "tract_one_to_four_family_homes",
-    "tract_median_age_of_housing_units",
-]
+HMDA_EXTRA_COLS = ["activity_year", "lei", "action_taken", "purchaser_type", "loan_type","property_type", "lien_status", "reverse_mortgage",
+    "open_end_line_of_credit", "business_or_commercial", "conforming_loan_limit", "derived_loan_product_type","derived_dwelling_category", "county_code", "census_tract",
+    "applicant_ethnicity_1", "co_applicant_ethnicity_1", "derived_ethnicity", "income", "rate_spread", "hoepa_status", "total_loan_costs","origination_charges", "discount_points", "lender_credits",
+    "loan_to_value_ratio", "intro_rate_period", "negative_amortization","interest_only_payment", "balloon_payment","other_nonamortizing_features", "property_value",
+    "manufactured_home_secured_property_type","manufactured_home_land_property_interest","submission_of_application", "initially_payable_to_institution",
+    "aus_1", "denial_reason_1", "tract_population","tract_minority_population_percent","ffiec_msa_md_median_family_income", "tract_to_msa_income_percentage","tract_owner_occupied_units", "tract_one_to_four_family_homes",
+    "tract_median_age_of_housing_units"]
 
-CHUNK_SIZE    = 200_000
+CHUNK_SIZE    = 200000
 
 # Finds Freddie Mac zip files for a given year, extracts only the origination
 def unzip_freddie_year(year, freddie_dir, freddie_local):
-    
     zip_pattern_sub  = os.path.join(freddie_dir, f"historical_data_{year}", f"historical_data_{year}Q*.zip")
     zip_pattern_flat = os.path.join(freddie_dir, f"historical_data_{year}Q*.zip")
     
     zip_files = glob.glob(zip_pattern_sub) or glob.glob(zip_pattern_flat)
 
     if not zip_files:
-        raise FileNotFoundError( f"No zip files found for {year}.")
+        print( f"No zip files found for {year}.")
 
    
     extracted = []
@@ -126,7 +92,7 @@ def load_and_prepare_freddie(txt_files, year):
     del frames
     gc.collect()
 
-    # Filter by year: keeps only loans whose first payment date falls in year or year-1
+    # Filter by year -> keeps only loans whose first payment date falls in year or year-1
     freddie["fp_year"] = freddie["first_payment_date"].str[:4]
     freddie = freddie[freddie["fp_year"].isin([str(year), str(year - 1)])]
 
@@ -149,9 +115,8 @@ def load_and_prepare_freddie(txt_files, year):
     }, inplace=True)
 
     # Numeric conversions
-    for col in ["loan_amount_r", "interest_rate", "loan_term", "num_units",
-                "original_ltv", "original_cltv", "original_dti",
-                "credit_score", "mi_pct"]:
+    numeric_columns=  ["loan_amount_r", "interest_rate", "loan_term", "num_units","original_ltv", "original_cltv", "original_dti","credit_score", "mi_pct"]
+    for col in numeric_columns:
         if col in freddie.columns:
             freddie[col] = pd.to_numeric(freddie[col], errors="coerce")
 
@@ -268,18 +233,11 @@ def run_match(year, drive_root):
 
 
     id_cols = ["loan_sequence_number", "match_year"]
-    freddie_cols_in_output = [
-        "credit_score", "first_payment_date", "first_time_homebuyer",
-        "maturity_date", "msa", "mi_pct", "num_units",
-        "occupancy_status_orig", "original_cltv", "original_dti",
-        "loan_amount_r", "original_ltv", "interest_rate", "channel",
-        "ppm_flag", "amortization_type", "state_code", "property_type",
-        "postal_code", "loan_purpose_orig", "loan_term", "num_borrowers",
-        "seller_name", "servicer_name", "super_conforming_flag",
-        "pre_relief_refi_seq", "special_eligibility", "relief_refi_indicator",
-        "property_valuation", "io_indicator", "mi_cancellation",
-        "fp_year", "zip3",
-    ]
+    freddie_cols_in_output = ["credit_score", "first_payment_date", "first_time_homebuyer","maturity_date", "msa", "mi_pct", "num_units",
+        "occupancy_status_orig", "original_cltv", "original_dti","loan_amount_r", "original_ltv", "interest_rate", "channel","ppm_flag", "amortization_type", "state_code", "property_type",
+        "postal_code", "loan_purpose_orig", "loan_term", "num_borrowers","seller_name", "servicer_name", "super_conforming_flag","pre_relief_refi_seq", "special_eligibility", "relief_refi_indicator",
+        "property_valuation", "io_indicator", "mi_cancellation", "fp_year", "zip3"]
+    
     match_cols = ["loan_amount", "loan_amount_r", "occupancy_type", "loan_purpose"]
     demo_cols  = [c for c in HMDA_DEMO_COLS  if c in final.columns]
     extra_cols = [c for c in HMDA_EXTRA_COLS if c in final.columns]
@@ -302,19 +260,15 @@ def run_match(year, drive_root):
     final.to_csv(out_path, index=False)
 
     n_clean = len(final)
-    print(f"Clean 1-to-1 matches: {n_clean:,} / {len(freddie_ready):,} "
-          f"({100*n_clean/len(freddie_ready):.1f}%)")
+    print(f"Clean 1-to-1 matches: {n_clean} / {len(freddie_ready)} "
+          f"({100*n_clean/len(freddie_ready)}%)")
 
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--drive_root", required=True,
-        help="Root directory (e.g. /content/drive/MyDrive/thesis_data)")
-    parser.add_argument(
-        "--year", type=int, required=True,
-        help="Year to process (e.g. 2024)")
+    parser.add_argument("--drive_root", required=True)
+    parser.add_argument("--year", type=int, required=True)
     
     args = parser.parse_args()
     run_match(year=args.year, drive_root=args.drive_root)
