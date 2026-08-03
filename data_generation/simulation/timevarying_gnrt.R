@@ -26,9 +26,9 @@ create_theta <- function(data, scenario, coeff){
   
       # Subject-level noise: one value per subject, repeated across their periods
       noise_per_sub <- rnorm(nsub, mean = 0, sd = coeff$NoiseS)
-      noise_rep     <- rep(noise_per_sub, each = nperiod)
-      S_first       <- S[seq(1, nrow(data), by = nperiod)]   # S value at period 1 per subject
-      S_rep         <- rep(S_first, each = nperiod)
+      noise_rep  <- rep(noise_per_sub, each = nperiod)
+      S_first <- S[seq(1, nrow(data), by = nperiod)]   # S value at period 1 per subject
+      S_rep <- rep(S_first, each = nperiod)
       
       theta <- theta * exp(noise_rep * S_rep)
       return(theta)   
@@ -44,9 +44,7 @@ create_theta <- function(data, scenario, coeff){
 
 # Compute the cumulative hazards function
 # Uses an Exponential baseline hazard: H(t) = Lambda * theta * t
-ExpHfunc <- function(ts1, ts2, theta, coeff){
-  coeff$Lambda * theta * (ts1 - ts2)
-}
+ExpHfunc <- function(ts1, ts2, theta, coeff){ coeff$Lambda * theta * (ts1 - ts2)}
 
 
 # Compute the continuous survival time within an interval
@@ -59,10 +57,9 @@ Exptfunc <- function(tall, theta, coeff, t0, rid){
 # Ensures that a target proportion (rate) of subjects are censored at the end.
 findsurvint <- function(y, nper, rate) {
   int <- quantile(y, probs = seq((1 - rate) / nper, 1 - rate, length.out = nper))
-  return(int)
-}
+  return(int)}
 
-# --- MAIN DATA GENERATION FUNCTION ---
+#  MAIN DATA GENERATION FUNCTION 
 # Generates a complete simulated survival dataset with fairness scenarios.
 # Combines covariate generation (genvar), hazard computation (create_theta),
 # and discrete-time survival time generation via inverse hazard sampling.
@@ -94,12 +91,12 @@ tvstimegnrt <- function(nsub = 200,
   tlen <- length(TS)
   seqt2 <- nperiod * c(1:(tlen / nperiod))     # Index of the last period
   seqt1 <- nperiod * c(0:((tlen - 1) / nperiod)) + 1       # Index of the first period
-  # --- seqt2 and seqt1 are used to compute intervals and then cumulative risk for each intervals ---
+  #  seqt2 and seqt1 are used to compute intervals and then cumulative risk for each intervals
   # Subject 1: (t1_1→t1_2), (t1_2→t1_3), (t1_3→t1_4)
   # Subject  2: (t2_1→t2_2), (t2_2→t2_3), (t2_3→t2_4)
 
   
-  # --- Cumulative hazard increments over each interval ---
+  # Cumulative hazard increments over each interval 
   # R[i, j] = H(ts_{j+1}) - H(ts_j) for subject i at period j
   R <- Hfunc(ts1 = TS[-seqt1], 
              ts2 = TS[-seqt2], 
@@ -108,7 +105,7 @@ tvstimegnrt <- function(nsub = 200,
   # each row belongs to a subject
   R <- matrix(R, ncol = nperiod - 1, byrow = TRUE)
   
-  # --- Inverse hazard sampling: find discrete survival period per subject ---
+  # Inverse hazard sampling: find discrete survival period per subject 
   # U ~ Uniform(0,1); event time = smallest t such that H(t) >= -log(U)
   U <- runif(nsub)
   survtime <- rep(0, nsub)
@@ -132,7 +129,6 @@ tvstimegnrt <- function(nsub = 200,
   rm(Theta)
   rm(U)
   gc()
-  RET = list(survtime = survtime,
-             coeff = Coeff)
+  RET = list(survtime = survtime, coeff = Coeff)
   return(RET)
 }
