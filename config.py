@@ -66,7 +66,6 @@ STATIC_COLS = ["credit_score", "original_dti", "original_ltv", "interest_rate", 
 TVC_COLS = ["current_upb", "current_interest_rate", "estimated_ltv", "bd_pct","current_upb_delta"]
 CAT_COLS = ["occupancy_status_orig", "loan_purpose_orig", ]
 
-
 FAIR_ATTR   = "SEX"    # "SEX" | "RACE" | "AGE"
 GROUP_NAMES = {"SEX":  {0: "Male/Joint",        1: "Female"},
     "RACE": {0: "White/Asian", 1: "Black/Indian"}, "AGE":  {0: "Old",         1: "Young"},}
@@ -75,16 +74,12 @@ GROUP_NAMES = {"SEX":  {0: "Male/Joint",        1: "Female"},
 SAMPLING = {
     "random_seed":  42, "target_loans": 100000,"w_default": 1.8,
     "w_disc":  1.4,"w_tvc": 1.5,"w_base": 1.0}
-
 RACE_MINORITY = {"black or african american","american indian or alaska native",
     "native hawaiian or other pacific islander","2 or more minority races"}
-
 
 # Grid search
 GRID_BETAS  = [0.0, 0.05, 0.1, 0.15 , 0.2, 0.25, 0.3, 0.5, 0.7]
 GRID_ALPHAS = [0.0, 0.05, 0.1, 0.15 , 0.2, 0.25, 0.3, 0.5, 0.7]
-
-
 # W&B
 USE_WANDB    = True
 WANDB_ENTITY = "alessia-ciccaglione02-"
