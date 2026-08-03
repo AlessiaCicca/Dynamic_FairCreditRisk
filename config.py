@@ -67,7 +67,7 @@ TVC_COLS = ["current_upb", "current_interest_rate", "estimated_ltv", "bd_pct","c
 CAT_COLS = ["occupancy_status_orig", "loan_purpose_orig", ]
 
 FAIR_ATTR   = "SEX"    # "SEX" | "RACE" | "AGE"
-GROUP_NAMES = {"SEX":  {0: "Male/Joint",        1: "Female"},
+GROUP_NAMES = {"SEX":  {0: "Male/Joint", 1: "Female"},
     "RACE": {0: "White/Asian", 1: "Black/Indian"}, "AGE":  {0: "Old",         1: "Young"},}
 
 # Sampling
