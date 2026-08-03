@@ -6,15 +6,14 @@
 #   - Added 4 fairness scenarios (fair, direct, proxy, temporal)
 # =============================================================================
 
-genvar <- function(nsub = 1000, 
-                   matsigma = NULL,
+genvar <- function(nsub = 1000, matsigma = NULL,
                    scenario= c("fair", "direct", "proxy", "temporal")){
 
   
   # Generates a simulated longitudinal dataset with:
   # - nsub subjects
   # - 6 covariates (X1–X6)
-  # - 12 time points
+  # - 24 time points
   # - a sensitive binary group S
   # - different fairness/data-generating mechanism depending on "scenario"
     
@@ -34,11 +33,9 @@ genvar <- function(nsub = 1000,
   #Distribution depends on scenario: biased scenarios → 30% ones / fair scenario → 50% ones
   
   if (scenario %in% c("direct", "proxy","temporal")) {
-    S <- rbinom(nsub, size = 1, prob = 0.3) 
-    }
+    S <- rbinom(nsub, size = 1, prob = 0.3) }
   else{
-    S <- rbinom(nsub, size = 1, prob = 0.5) 
-    }
+    S <- rbinom(nsub, size = 1, prob = 0.5) }
 
   #Splits indices into group 0 and group 1
   idx_S0 <- which(S == 0)
@@ -105,7 +102,7 @@ genvar <- function(nsub = 1000,
   Data[, "X6"] <- pnorm(Data[, "X6"]) * 2
 
 
-  # --- Feature-level noise on X4 e X6 for S=1 (proxy e temporal) ---
+  # Feature-level noise on X4 e X6 for S=1 (proxy e temporal)
   # Corrupts the predictive signal for the disadvantaged group
   # Adding Gaussian noise → increases the variance, not the mean
   if (scenario %in% c("proxy", "temporal")) {
@@ -116,7 +113,7 @@ genvar <- function(nsub = 1000,
     Data[S_rep == 1, "X6"] <- Data[S_rep == 1, "X6"] + rnorm(n_S1, 0, sigma_noise)
   }
                      
-  # --- Mean shift ---
+
   Gamma_vec <- c(0, -1, 0, -1, 0, 1) * Coeff$Gamma  
   
   if (scenario == "proxy") {
