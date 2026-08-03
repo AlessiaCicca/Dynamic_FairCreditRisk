@@ -5,7 +5,7 @@
 #   - Fixed simulation parameters
 #   - Added 4 fairness scenarios (fair, direct, proxy, temporal)
 # 
-# Mantain nperiod=8, model=linear and distribution=Exp (easiest), censor.rate = 10% (more realistic) 
+# Mantain model=linear and distribution=Exp (easiest), censor.rate = 10% (more realistic) 
 # and SNR (How strong is the signal compared to the noise) = "low" (to financial domain)
 # =============================================================================
 
