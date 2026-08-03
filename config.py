@@ -1,7 +1,4 @@
-"""
-Global configuration for the project: all parameters are defined here.
-
-"""
+# Configuration file for the project with the definition of all parameters
 
 import torch
 
@@ -17,7 +14,7 @@ ALPHA = 0 # M_DYNAMIC EO penalty weight
 
 # EO penalty mode
 # Options: "mean" | "weighted" | "trend_aware"
-EO_MODE_D = "mean"   # dynamic model
+EO_MODE_D = "mean" 
 
 # Time schedule mode (alpha_schedule)
 # Options: "flat" | "decay" | "growth" | "u_shaped"  | "n_shaped" 
@@ -29,32 +26,32 @@ HIDDEN2  = 32
 DROPOUT  = 0.3
 
 # Training 
-LR           = 1e-3
+LR = 1e-3
 WEIGHT_DECAY = 1e-4
-N_EPOCHS     = 200
-PATIENCE     = 30
-MIN_LR       = 1e-5
-PW_CLIP      = 10.0    # cap on pos_weight
+N_EPOCHS = 200
+PATIENCE = 30
+MIN_LR = 1e-5
+PW_CLIP  = 10.0   
 
 # Cross-validation 
 N_FOLDS = 3
 
 # Simulation dataset
-SCENARIO         = "fair"          # "fair" | "direct" | "proxy" | "temporal"
-HORIZON          = 6               # prediction horizon (periods)
-LANDMARKS_SIM        = [0, 2, 4, 6, 8, 10,  12,  14, 16, 18]
+SCENARIO  = "fair"          # "fair" | "direct" | "proxy" | "temporal"
+HORIZON  = 6               # prediction horizon (periods)
+LANDMARKS_SIM = [0, 2, 4, 6, 8, 10,  12,  14, 16, 18]
 N_TEST_LANDMARKS = 12
 DELTA_SIM=2
 
 # Column names in simulation dataset
-ID_COL    = "ID"
+ID_COL = "ID"
 TIME_COL  = "Time"
 EVENT_COL = "Event"
 SENS_COL  = "S"
 
 STATIC_COLS_SIM  = ["X1", "X2"]
-TVC_COLS_SIM     = ["X3", "X4", "X6"]
-CAT_COLS_SIM     = ["X5"]
+TVC_COLS_SIM  = ["X3", "X4", "X6"]
+CAT_COLS_SIM  = ["X5"]
 ALL_NUM_COLS = STATIC_COLS_SIM + TVC_COLS_SIM
 
 ATTR_NAME   = "S"
@@ -65,39 +62,22 @@ HORIZON_MONTHS = 12
 LANDMARKS = [0, 4, 8, 12, 16,  20,  24, 28,  32,  36, 40,  44, 48]
 DELTA=4
 
-STATIC_COLS = [
-    "credit_score", "original_dti", "original_ltv", 
-    "interest_rate", "loan_term", "num_borrowers", "loan_amount"
-]
-TVC_COLS = [
-    "current_upb", "current_interest_rate", "estimated_ltv", "bd_pct","current_upb_delta"
-]
+STATIC_COLS = ["credit_score", "original_dti", "original_ltv", "interest_rate", "loan_term", "num_borrowers", "loan_amount"]
+TVC_COLS = ["current_upb", "current_interest_rate", "estimated_ltv", "bd_pct","current_upb_delta"]
 CAT_COLS = ["occupancy_status_orig", "loan_purpose_orig", ]
 
 
 FAIR_ATTR   = "SEX"    # "SEX" | "RACE" | "AGE"
-GROUP_NAMES = {
-    "SEX":  {0: "Male/Joint",        1: "Female"},
-    "RACE": {0: "White/Asian", 1: "Black/Indian"},
-    "AGE":  {0: "Old",         1: "Young"},
-}
+GROUP_NAMES = {"SEX":  {0: "Male/Joint",        1: "Female"},
+    "RACE": {0: "White/Asian", 1: "Black/Indian"}, "AGE":  {0: "Old",         1: "Young"},}
 
 # Sampling
 SAMPLING = {
-    "random_seed":   42,
-    "target_loans":  100_000,
-    "w_default":     1.8,
-    "w_disc":        1.4,
-    "w_tvc":         1.5,
-    "w_base":        1.0,
-}
+    "random_seed":  42, "target_loans": 100000,"w_default": 1.8,
+    "w_disc":  1.4,"w_tvc": 1.5,"w_base": 1.0}
 
-RACE_MINORITY = {
-    "black or african american",
-    "american indian or alaska native",
-    "native hawaiian or other pacific islander",
-    "2 or more minority races"
-}
+RACE_MINORITY = {"black or african american","american indian or alaska native",
+    "native hawaiian or other pacific islander","2 or more minority races"}
 
 
 # Grid search
