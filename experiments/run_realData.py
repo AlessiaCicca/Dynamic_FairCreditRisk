@@ -2,16 +2,14 @@
 MAIN RUN for real data analysis
 
 Reads data matched by data_generation/realData/,
-builds the two datasets, runs CV, fairness analysis, and grid search.
+builds the two datasets, runs CV, fairness analysis and grid search.
 """
 
 import argparse
 import gc
 import os
-
 import warnings
 from pathlib import Path
-
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -20,7 +18,6 @@ import yaml
 from sklearn.preprocessing import OneHotEncoder
 import sys
 from pathlib import Path
-
 from sklearn.metrics import roc_auc_score, brier_score_loss
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,32 +25,20 @@ sys.path.insert(0, str(ROOT))
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-# IMPORTS
-from config import (
-    SEED, DEVICE,
-    ALPHA, BETA, 
-    EO_MODE_D,
-    SCHEDULE_MODE_D, 
-    HORIZON_MONTHS, LANDMARKS,
-    STATIC_COLS, TVC_COLS, CAT_COLS,
-    FAIR_ATTR, GROUP_NAMES, DELTA,
-    N_FOLDS, USE_WANDB, WANDB_ENTITY, WANDB_PROJECT,
-    GRID_BETAS, GRID_ALPHAS,N_EPOCHS,LR, PW_CLIP,
-)
-from src.data.build_static        import build_static
-from src.data.build_dynamic       import build_dynamic
-from src.training.run_train import (
-    run_cv, build_summary_table, find_best_threshold, run_grid_search,
-    plot_tradeoff, make_splits,
-    _collapse_fold_full_horizon, _integrate_curve, _eval_dynamic_from_pdh,
-)
-from src.evaluation.fairness_metrics import (
-    fairness_metrics, filter_sensitive, res_to_row,
-    print_fairness_report, compute_adTPR_adFPR,
-)
-from src.evaluation.fairness_plots import (
-    plot_separation_over_time, plot_auc_fairness_bar,
-)
+
+from config import (SEED, DEVICE, ALPHA, BETA, EO_MODE_D,
+    SCHEDULE_MODE_D, HORIZON_MONTHS, LANDMARKS, STATIC_COLS, TVC_COLS, CAT_COLS,
+    FAIR_ATTR, GROUP_NAMES, DELTA,N_FOLDS, USE_WANDB, WANDB_ENTITY, WANDB_PROJECT,
+    GRID_BETAS, GRID_ALPHAS,N_EPOCHS,LR, PW_CLIP,)
+
+from src.data.build_static import build_static
+from src.data.build_dynamic import build_dynamic
+from src.training.run_train import ( run_cv, build_summary_table, find_best_threshold, run_grid_search,
+    plot_tradeoff, make_splits,collapse_fold_full_horizon, integrate_curve, eval_dynamic_from_pdh)
+
+from src.evaluation.fairness_metrics import ( fairness_metrics, filter_sensitive, res_to_row,
+    print_fairness_report, compute_adTPR_adFPR)
+from src.evaluation.fairness_plots import plot_separation_over_time, plot_auc_fairness_bar
 
 
 # Reproducibility
@@ -62,33 +47,6 @@ torch.manual_seed(SEED)
 torch.cuda.manual_seed(SEED)
 torch.backends.cudnn.deterministic = True
 
-# From hazard per_bin to PD(L, L+horizon)
-def collapse_to_pdh(oof_hazard, event_bin, ids, lmk_vals, n_bins,
-                     complete_only=True):
-    # Numerical stability
-    h = np.clip(oof_hazard, 1e-7, 1 - 1e-7)
-    dfp = pd.DataFrame({
-        "id": ids, "L": lmk_vals,
-         # log(1 - hazard) -> to translate product in sum
-        "log1mh": np.log1p(-h),  
-        "ev": event_bin,
-    })
-    # Group bin of the same subject and landmark
-    g    = dfp.groupby(["id", "L"], sort=False)
-    # prod(1 - h) = exp(sum(log(1 - h)))
-    surv = np.exp(g["log1mh"].sum())  
-    # The probability of default is 1-Surv 
-    pdh = (1.0 - surv).rename("pdh")
-    # Indicate if there is the event in any of the bin 
-    yh  = g["ev"].max().rename("yh")
-    # Number of bin for (id, L)
-    cnt  = g.size().rename("n")
-    out  = pd.concat([pdh, yh, cnt], axis=1).reset_index()
-    # Require all bins OR default
-    if complete_only:
-        out = out[(out["n"] == n_bins) | (out["yh"] == 1)]
-    return out
-
 
 def plot_pd_by_landmark_group(dyn_pd, dyn_L, sens_arr, group_names, out_dir, title, filename):
     df = pd.DataFrame({"L": dyn_L, "pd": dyn_pd, "sens": sens_arr})
@@ -96,40 +54,31 @@ def plot_pd_by_landmark_group(dyn_pd, dyn_L, sens_arr, group_names, out_dir, tit
     fig, ax = plt.subplots(figsize=(8,5))
     for g in agg.columns:
         ax.plot(agg.index, agg[g], marker="o", label=group_names.get(g, str(g)))
-    ax.set_xlabel("Landmark"); ax.set_ylabel("PD-H media predetta")
-    ax.set_title(title); ax.legend(); ax.grid(alpha=0.3)
+    ax.set_xlabel("Landmark")
+    ax.set_ylabel("PD-H mean")
+    ax.set_title(title)
+    ax.legend()
+    ax.grid(alpha=0.3)
     plt.savefig(out_dir / filename, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
 
 def parse_args():
-    p = argparse.ArgumentParser(
-        description="Run real-data experiment."
-    )
-    p.add_argument("--data_path", required=True,
-                   help="Path to panel_all_years_sampled.csv")
-    p.add_argument("--fair_attr", default="SEX",
-                   choices=["SEX", "RACE", "AGE"])
-    p.add_argument("--config", default=None,
-                   help="Path to YAML config")
-    p.add_argument("--grid_search", action="store_true",
-                   help="Run grid search after CV")
-    p.add_argument("--out_dir", default=None,
-                   help="Output directory")
+    p = argparse.ArgumentParser()
+    p.add_argument("--data_path", required=True)
+    p.add_argument("--fair_attr", default="SEX", choices=["SEX", "RACE", "AGE"])
+    p.add_argument("--config", default=None)
+    p.add_argument("--grid_search", action="store_true")
+    p.add_argument("--out_dir")
     return p.parse_args()
 
 
 def load_config(config_path):
-    cfg = dict(
-        alpha=ALPHA, beta=BETA, 
-        eo_mode_d=EO_MODE_D, delta=DELTA,
-        schedule_mode_d=SCHEDULE_MODE_D, 
-        horizon=HORIZON_MONTHS, landmarks=LANDMARKS,
-        n_folds=N_FOLDS, use_wandb=USE_WANDB,
-        grid_betas=GRID_BETAS, grid_alphas=GRID_ALPHAS,
-        n_epochs= N_EPOCHS,lr = LR, pw_clip=  PW_CLIP,
-   
-    )
+    cfg = dict(alpha=ALPHA, beta=BETA, eo_mode_d=EO_MODE_D, delta=DELTA,
+        schedule_mode_d=SCHEDULE_MODE_D, horizon=HORIZON_MONTHS, landmarks=LANDMARKS,
+        n_folds=N_FOLDS, use_wandb=USE_WANDB,grid_betas=GRID_BETAS, grid_alphas=GRID_ALPHAS,
+        n_epochs= N_EPOCHS,lr = LR, pw_clip=  PW_CLIP)
+    
     if config_path and os.path.exists(config_path):
         with open(config_path) as f:
             overrides = yaml.safe_load(f)
@@ -137,79 +86,10 @@ def load_config(config_path):
     return cfg
 
 
-def run_feature_importance(static_data, dynamic_data, 
-                            res_static, res_dynamic,
-                            out_dir, use_wandb=False):
-
-    print("FEATURE IMPORTANCE")
-    print("="*60)
-
-    for name, data, res in [
-        ("M_STATIC",  static_data,  res_static),
-        ("M_DYNAMIC", dynamic_data, res_dynamic),
-    ]:
-        model  = res["model_last"]
-        scaler = res["scaler_last"]
-        X      = data["X"]
-        y      = data["y"]
-        feature_names = data["feature_names"]
-
-        # Scale with the same scaler used in training
-        X_s = scaler.transform(X).astype(np.float32)
-        X_s = np.nan_to_num(X_s, nan=0., posinf=5., neginf=-5.)
-
-        # AUC baseline
-        model.eval()
-        with torch.no_grad():
-            baseline_preds = torch.sigmoid(
-                model(torch.tensor(X_s, device=DEVICE))
-            ).cpu().numpy()
-        baseline_auc = roc_auc_score(y, baseline_preds)
-
-        # Permutation importance
-        importances = []
-        for i in range(X_s.shape[1]):
-            X_perm = X_s.copy()
-            np.random.shuffle(X_perm[:, i])  
-            with torch.no_grad():
-                perm_preds = torch.sigmoid(
-                    model(torch.tensor(X_perm, device=DEVICE))
-                ).cpu().numpy()
-            perm_auc = roc_auc_score(y, perm_preds)
-            # AUC decrease
-            importances.append(baseline_auc - perm_auc) 
-
-        df_imp = pd.DataFrame({
-            "feature":    feature_names,
-            "importance": importances,
-        }).sort_values("importance", ascending=False)
-
-        print(f"\n--- {name} last_fold ---")
-        print(df_imp.head(15).to_string(index=False))
-        df_imp.to_csv(out_dir / f"feature_importance_{name.lower()}.csv", index=False)
-
-        # Plot top 15
-        top = df_imp.head(35)
-        fig, ax = plt.subplots(figsize=(10, 6))
-        ax.barh(top["feature"][::-1], top["importance"][::-1], color="#4C72B0")
-        ax.set_xlabel("AUC drop (↑ more important)")
-        ax.set_title(f"Permutation Importance — {name}")
-        ax.axvline(0, color="black", linewidth=0.8, linestyle="--")
-        ax.grid(axis="x", alpha=0.3)
-        plt.tight_layout()
-        plot_path = out_dir / f"feature_importance_{name.lower()}.png"
-        plt.savefig(plot_path, dpi=150)
-        plt.close(fig)
-
-        if use_wandb:
-            import wandb
-            wandb.log({f"feature_importance/{name}": wandb.Image(str(plot_path))})
 
 # SEP-AUC as fold mean
-def fairness_auc_per_fold(fair_attr, res_static, res_dynamic, splits_s, splits_d,
-                          static_data, dynamic_data, n_bins, delta,
-                          th_static, th_dynamic, group_names,
-                          sens_static_full, sens_dynamic_full):
+def fairness_auc_per_fold(fair_attr, res_static, res_dynamic, splits_s, splits_d, static_data, dynamic_data, n_bins, delta,
+                          th_static, th_dynamic, group_names, sens_static_full, sens_dynamic_full):
     rows = []
 
     # M_STATIC 
@@ -622,14 +502,7 @@ def main():
         if sep_plot.exists():
             wandb.log({"fairness_separation_plot": wandb.Image(str(sep_plot))})
 
-    run_feature_importance(
-        static_data  = static_data,
-        dynamic_data = dynamic_data,
-        res_static   = res_static,
-        res_dynamic  = res_dynamic,
-        out_dir      = out_dir,
-        use_wandb    = cfg["use_wandb"],
-    )
+   
 
     # Grid search
     if args.grid_search:
