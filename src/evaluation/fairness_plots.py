@@ -1,19 +1,15 @@
 """
 Fairness visualisation functions.
-Two variants for the time-series plot:
-  - plot_fairness_over_time_single : simulation 
-  - plot_fairness_over_time        : real dataset 
-  - plot_auc_fairness_bar   : bar chart dynamic vs static
+  - plot_fairness_over_time_single: simulation 
+  - plot_fairness_over_time: real dataset 
+  - plot_auc_fairness_bar: bar chart dynamic vs static
 """
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-
-
 ATTR_COLORS = {"SEX":"tab:blue","RACE":"tab:orange","AGE":"tab:green"}
-
 
 # Simulation
 def plot_separation_over_time_single(df_time,time_col,title,filename,out_dir,static_val=None,min_samples_per_group=20):
