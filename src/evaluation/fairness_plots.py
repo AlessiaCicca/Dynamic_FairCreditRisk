@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 
-ATTR_COLORS = {"SEX":  "tab:blue","RACE": "tab:orange","AGE":  "tab:green"}
+ATTR_COLORS = {"SEX":"tab:blue","RACE":"tab:orange","AGE":"tab:green"}
 
 
 # Simulation
