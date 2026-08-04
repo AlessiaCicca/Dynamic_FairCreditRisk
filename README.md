@@ -1,4 +1,5 @@
-# An Equitable Framework for Dynamic Credit Risk
+# An Equitable Framework for 
+# Dynamic Credit Risk
 
 **Fairness Penalization in Discrete-Time Survival Models**
 
