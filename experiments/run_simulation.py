@@ -200,7 +200,7 @@ def run_fairness_analysis(y_dynamic, dynamic_oof, sens_dynamic, lmk_vals,
 def main():
     args = parse_args()
     cfg  = load_config(args.config, args)
-     if args.out_dir:
+    if args.out_dir:
         out_dir = Path(args.out_dir)
     else:
         out_dir = Path("outputs") / "simulation" / args.scenario
