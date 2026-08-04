@@ -11,12 +11,31 @@ This repository contains the source code developed as part of a Master's thesis 
 
 The core contribution is an in-processing fairness penalty designed for a discrete-time
 survival landmark model (`M_DYNAMIC`), where equalized odds is enforced across the loan lifetime rather than at a single point. A static binary classifier (`M_STATIC`) serves as the baseline, letting us compare how fairness behaves when it is imposed once at origination against when it is maintained dynamically across landmarks.
-
-
 <p align="center">
-  <img src="schema.png" width="600" alt="Descrizione">
+  <img src="schema.png" width="800" alt="Descrizione">
 </p>
 
+## What this project does
+
+We study how fairness in credit risk evolves over the life of a loan, and how
+it can be enforced over time. Four contributions:
+
+1. **A longitudinal, demographically annotated dataset**, built by linking
+   loan-level repayment data with mortgage records carrying the protected
+   attributes, complemented by synthetic scenarios that inject bias in
+   controlled forms and intensities.
+
+2. **Two comparable models**, static (`M_STATIC`) and dynamic (`M_DYNAMIC`),
+   differing only in how they treat time, so any gap in fairness or performance
+   comes from the framework alone.
+
+3. **A time-aware fairness penalty**, based on the separation criterion and
+   computed at multiple landmarks, with configurable aggregation modes and
+   temporal weights.
+
+4. **A metric for fairness over time**, measuring separation as a curve over
+   the loan lifetime rather than a single number.
+   
 ## Repository structure
 
 ```
