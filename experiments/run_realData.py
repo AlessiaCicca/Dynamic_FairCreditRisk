@@ -354,7 +354,6 @@ def main():
         id2g = id2g[~id2g.index.duplicated(keep="first")] 
         dyn_sens_collapsed[attr] = pd.Series(dyn_ids).map(id2g).to_numpy()
 
-
     plot_pd_by_landmark_group(dyn_pd=dyn_pd,dyn_L=dyn_L,
     sens_arr=dyn_sens_collapsed[args.fair_attr],  
     group_names=GROUP_NAMES[args.fair_attr],
@@ -362,42 +361,22 @@ def main():
     title=f"PD-H per landmark — M_DYNAMIC (α={cfg['alpha']})",
     filename=f"pd_by_landmark_{args.fair_attr}_alpha{cfg['alpha']}.png",)
 
-
-    df_dyn_lmk, df_auc = run_fairness_analysis(
-    y_dynamic=dyn_yh,
-    dynamic_oof=dyn_pd,
-    sens_dynamic=dyn_sens_collapsed[args.fair_attr],
-    lmk_vals=dyn_L,
-    out_dir=out_dir, cfg=cfg,
-    th_dynamic=th_dynamic,
-    fair_attr=args.fair_attr,
-    res_static=res_static, res_dynamic=res_dynamic,
-    splits_s=splits_s, splits_d=splits_d,
+    df_dyn_lmk, df_auc = run_fairness_analysis( y_dynamic=dyn_yh,dynamic_oof=dyn_pd,sens_dynamic=dyn_sens_collapsed[args.fair_attr],
+    lmk_vals=dyn_L,out_dir=out_dir, cfg=cfg,th_dynamic=th_dynamic,fair_attr=args.fair_attr,
+    res_static=res_static, res_dynamic=res_dynamic,splits_s=splits_s, splits_d=splits_d,
     static_data=static_data, dynamic_data=dynamic_data, n_bins=n_bins,
-    sens_static_full=static_sens_by_attr[args.fair_attr],
-    sens_dynamic_full=dyn_sens_by_attr[args.fair_attr],
-    )
-
-    
+    sens_static_full=static_sens_by_attr[args.fair_attr],sens_dynamic_full=dyn_sens_by_attr[args.fair_attr])
 
     if cfg["use_wandb"]:
-
-        # Fairness (media dei fold, test): una riga per modello
         for _, row in df_auc.iterrows():
             m = row["Model"].lower()
-            wandb.log({
-                f"fairness/{m}/sep_auc_mean": row["SEP-AUC Mean"],
-                f"fairness/{m}/sep_auc_sd":   row["SEP-AUC SD"],
-                f"fairness/{m}/adTPR":        row["adTPR"],
-                f"fairness/{m}/adFPR":        row["adFPR"],
-            })
+            wandb.log({f"fairness/{m}/sep_auc_mean": row["SEP-AUC Mean"],
+                f"fairness/{m}/sep_auc_sd": row["SEP-AUC SD"],
+                f"fairness/{m}/adTPR": row["adTPR"],f"fairness/{m}/adFPR": row["adFPR"]})
 
-        # Dynamic per landmark
         for _, row in df_dyn_lmk.iterrows():
             L = int(row["landmark"])
-            wandb.log({
-                f"dynamic/{args.fair_attr}/landmark_{L}/separation":   row.get("separation"),
-            })
+            wandb.log({f"dynamic/{args.fair_attr}/landmark_{L}/separation": row.get("separation")})
 
         for attr_name in ["SEX", "RACE", "AGE"]:
             img_path = out_dir / f"fairness_auc_{attr_name}.png"
@@ -408,41 +387,32 @@ def main():
         if sep_plot.exists():
             wandb.log({"fairness_separation_plot": wandb.Image(str(sep_plot))})
 
-   
 
     # Grid search
     if args.grid_search:
         df_grid = run_grid_search(
             X_static=static_data["X"], y_static=static_data["y"],
-            grp_static=static_data["groups"],
-            sens_static=static_data["sensitive"],
+            grp_static=static_data["groups"],sens_static=static_data["sensitive"],
             X_dynamic=dynamic_data["X"], y_dynamic=dynamic_data["y"],
             grp_dynamic=dynamic_data["groups"],
-            sens_dynamic=dynamic_data["sensitive"],
-            lmk_vals=dynamic_data["lmk_vals"],
+            sens_dynamic=dynamic_data["sensitive"],lmk_vals=dynamic_data["lmk_vals"],
             group_names=GROUP_NAMES[args.fair_attr],
             betas=cfg["grid_betas"], alphas=cfg["grid_alphas"],
-            n_folds=cfg["n_folds"],
-            eo_mode_d=cfg["eo_mode_d"],
-            schedule_mode_d=cfg["schedule_mode_d"],
-            n_bins=cfg["horizon"] // cfg.get("delta", 4),
-            splits_static=splits_s,
-            splits_dynamic=splits_d, 
+            n_folds=cfg["n_folds"],eo_mode_d=cfg["eo_mode_d"],
+            schedule_mode_d=cfg["schedule_mode_d"],n_bins=cfg["horizon"] // cfg.get("delta", 4),
+            splits_static=splits_s,splits_dynamic=splits_d, 
             out_dir=out_dir, bin_times=dynamic_data["bin_time_vals"],
             feat_names=dynamic_data["feature_names"],
             delta=cfg.get("delta", 4), device=DEVICE,
-            t_min=t_min, t_max=t_max, 
-            run_tag=run_tag,
-        )
+            t_min=t_min, t_max=t_max, run_tag=run_tag)
+        
         plot_tradeoff(df_grid, out_dir=out_dir, run_tag=run_tag)
-        if cfg["use_wandb"]:
-             
+        if cfg["use_wandb"]:     
           df_grid.to_csv(out_dir / "grid_search_results.csv", index=False)
           
           for img_path in out_dir.glob(f"*{run_tag}*.png"):
               wandb.log({f"grid_search/{img_path.stem}": wandb.Image(str(img_path))})
           
-
     if cfg["use_wandb"]:
         import wandb
         wandb.finish()
