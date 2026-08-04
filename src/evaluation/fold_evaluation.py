@@ -78,8 +78,7 @@ def eval_dynamic_from_pdh(coll, sens_by_id, group_names, eval_th):
     ad = compute_adTPR_adFPR(eval_y, yb_all, eval_sens, eval_time)
     adtpr, adfpr = ad["adTPR"], ad["adFPR"]
 
-    return { "auc": auc_integrated,"sep_auc": sep_auc,"sep_mean": sep_mean,
-        "adtpr": adtpr,"adfpr": adfpr,"brier": brier_integrated,"df_perf": df_perf}
+    return auc_integrated, sep_auc, sep_mean, adtpr, adfpr
 
 
 # Compute the integrale of a generic curve store in df_t (type value/time)

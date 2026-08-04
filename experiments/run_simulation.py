@@ -47,7 +47,7 @@ from src.data.build_dynamic       import build_dynamic
 from src.training.run_train import (
     run_cv, build_summary_table, find_best_threshold, run_grid_search,
     plot_tradeoff, make_splits,
-    _collapse_fold_full_horizon, _eval_dynamic_from_pdh,
+    collapse_fold_full_horizon, eval_dynamic_from_pdh,
 )
 from src.evaluation.fairness_metrics import (
     fairness_metrics, filter_sensitive, res_to_row,
@@ -185,12 +185,12 @@ def fairness_auc_per_fold(res_static, res_dynamic, splits_s, splits_d,
     for k, (_, _, test_idx) in enumerate(splits_d):
         th_k = ths_d[k] if ths_d is not None else th_dynamic
         model_k, scaler_k = res_dynamic["fold_models"][k]
-        coll = _collapse_fold_full_horizon(
+        coll = collapse_fold_full_horizon(
             model_k, scaler_k, X, y, grp, lmk, bt, fn,
             test_idx, n_bins, delta, DEVICE)
         if len(coll) == 0:
             continue
-        r = _eval_dynamic_from_pdh(coll, sens_by_id, group_names, th_k)
+        r = eval_dynamic_from_pdh(coll, sens_by_id, group_names, th_k)
         sep_d.append(r[1])      # sep_auc
         adtpr_d.append(r[3])    # adTPR
         adfpr_d.append(r[4])    # adFPR
@@ -478,7 +478,7 @@ def main():
     # PD-H full-horizon, calcolato PER FOLD: ogni fold usa il PROPRIO modello
     # per predire il proprio test (coerente con run_realData.py)
     pdh_df = pd.concat([
-        _collapse_fold_full_horizon(
+        collapse_fold_full_horizon(
             model_k, scaler_k,
             dynamic_data["X"], dynamic_data["y"], dynamic_data["groups"],
             dynamic_data["lmk_vals"], dynamic_data["bin_time_vals"],

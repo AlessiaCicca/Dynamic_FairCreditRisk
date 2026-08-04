@@ -13,7 +13,7 @@ def build_static(df,static_cols,cat_cols,horizon,id_col="ID",
     time_col="Time",first_event_col="FirstEventTime",sens_col="sens_loan",enc_cat=None):
 
     # Take first observation per subject 
-    static_df = df.sort_values([id_col, time_col]).drop_duplicates(subset=id_col, keep="first")
+    static_df = (df.sort_values(time_col).groupby(id_col, as_index=False).nth(0))
 
     # Target -> verify if default (first_event_col notna) occurs before horizon
     static_df["target_static"] = (static_df[first_event_col].notna() & (static_df[first_event_col] <= horizon)).astype(np.int8)
@@ -44,3 +44,4 @@ def build_static(df,static_cols,cat_cols,horizon,id_col="ID",
     gc.collect()
 
     return dict( X = X, y = y, groups = groups,sensitive = sensitive, enc_cat = enc_cat, medians = medians, feature_names = feature_names)
+  
