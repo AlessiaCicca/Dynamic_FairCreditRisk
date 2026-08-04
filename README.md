@@ -106,7 +106,7 @@ python experiments/run_realData.py --data_path <path>/output/panel_cleaned.csv -
 
 ## Configuration
 
-All key parameters (fairness penalty weights `ALPHA`/`BETA`, EO aggregation mode, MLP architecture, training hyperparameters, landmark schedules, sensitive attribute selection, grid search ranges, W&B logging) are centralized in `config.py`.
+All key parameters (fairness penalty weights ALPHA/BETA, EO aggregation mode, MLP architecture, training hyperparameters, landmark schedules, sensitive attribute selection, grid search ranges, W&B logging) are centralized in `config.py`.
 
 
 ## Experiment tracking
