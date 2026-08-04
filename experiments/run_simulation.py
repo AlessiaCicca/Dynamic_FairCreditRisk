@@ -8,8 +8,6 @@ builds the two datasets, runs CV, fairness analysis and grid search.
 import argparse
 import gc
 import os
-from re import I
-import time
 import warnings
 from pathlib import Path
 import numpy as np
@@ -26,7 +24,7 @@ sys.path.insert(0, str(ROOT))
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-from config import (SEED, DEVICE,ALPHA, BETA,EO_MODE_D, DELTA_SIM,SCHEDULE_MODE_D,HORIZON, LANDMARKS_SIM, N_TEST_LANDMARKS,
+from config import (SEED, DEVICE,ALPHA, BETA,EO_MODE_D, DELTA_SIM,SCHEDULE_MODE_D,HORIZON, LANDMARKS_SIM,
     ID_COL, TIME_COL, EVENT_COL, SENS_COL,STATIC_COLS_SIM, TVC_COLS_SIM, CAT_COLS_SIM, ALL_NUM_COLS,
     ATTR_NAME, GROUP_NAMES_SIM,N_FOLDS, USE_WANDB, WANDB_ENTITY, WANDB_PROJECT,GRID_BETAS, GRID_ALPHAS, N_EPOCHS, LR, PW_CLIP)
 from src.data.build_static import build_static
@@ -142,11 +140,6 @@ def load_raw(data_dir, scenario):
     # FirstEventTime
     first_event = (df[df[EVENT_COL] == 1].groupby(ID_COL)[TIME_COL].min().rename("FirstEventTime"))
     df = df.merge(first_event, on=ID_COL, how="left")
-
-    n_ids = df[ID_COL].nunique()
-    ev_per_id = df.groupby(ID_COL)["FirstEventTime"].first().notna()
-    sens_per  = df.groupby(ID_COL)["sens_loan"].first()
-
     return df, trend_cols
 
 
@@ -157,26 +150,24 @@ def run_fairness_analysis(y_dynamic, dynamic_oof, sens_dynamic, lmk_vals,
     sens_static_full=None, sens_dynamic_full=None):
 
     group_names = GROUP_NAMES_SIM
-    ybin_dynamic = (dynamic_oof >= th_dynamic).astype(int)
-
     dyn_rows = []
     MIN_GROUP = 20
 
-    # Dynamic per landmark
+    # LOOP on landmark -> Separation per landmark
     for L in cfg["landmarks"]:
         mask = lmk_vals == L
+        # Drop rows with invalid sensitive value
         yt_f, yp_f, sn_f = filter_sensitive(y_dynamic[mask], dynamic_oof[mask], sens_dynamic[mask])
         if len(np.unique(yt_f)) < 2 or len(np.unique(sn_f)) < 2:
             continue
         counts = np.array([(sn_f == g).sum() for g in np.unique(sn_f)])
         if int(counts.min()) < MIN_GROUP:
             continue
+        # Binarization -> from value to 0/1
         yb_f = (yp_f >= th_dynamic).astype(int)
+        # res_to_row extracts separation
         res  = fairness_metrics(yt_f, yp_f, yb_f, sn_f,group_names, threshold=th_dynamic)
         dyn_rows.append(res_to_row(res, group_names,{"model": "M_DYNAMIC", "landmark": L}))
-
-    # adTPR / adFPR 
-    res_adt = compute_adTPR_adFPR(y_dynamic, ybin_dynamic, sens_dynamic, lmk_vals)
 
     df_dyn_lmk = pd.DataFrame(dyn_rows)
     df_dyn_lmk.to_csv(out_dir / "fairness_dynamic_by_landmark.csv", index=False)
@@ -187,24 +178,20 @@ def run_fairness_analysis(y_dynamic, dynamic_oof, sens_dynamic, lmk_vals,
         th_static=res_static["threshold"], th_dynamic=th_dynamic,
         group_names=group_names,sens_static_full=sens_static_full,sens_dynamic_full=sens_dynamic_full)
     df_auc.to_csv(out_dir / "auc_fairness_comparison.csv", index=False)
-    print("\n--- AUC FAIRNESS (media dei fold, test) ---")
     print(df_auc.to_string(index=False))
 
-    static_sep = df_auc.loc[df_auc["Model"] == "M_STATIC", "SEP-AUC Mean"].values[0]
+    sep_by_model =  df_auc.set_index("Model")["SEP-AUC Mean"]
+    static_sep =  sep_by_model["M_STATIC"]
+    dynamic_sep = sep_by_model["M_DYNAMIC"]
+        
 
     # Plots
-    plot_separation_over_time_single(
-        df_time=df_dyn_lmk, time_col="landmark",
-        title="Fairness — M_DYNAMIC",
-        filename="fairness_dynamic_over_landmark.png",
-        out_dir=out_dir, static_val=float(static_sep),
-        min_samples_per_group=MIN_GROUP,
-    )
+    plot_separation_over_time_single(df_time=df_dyn_lmk, time_col="landmark",
+        title="Fairness — M_DYNAMIC",filename="fairness_dynamic_over_landmark.png",
+        out_dir=out_dir, static_val=float(static_sep),min_samples_per_group=MIN_GROUP)
 
-    if not df_auc.empty:
-        bar_df = pd.DataFrame([{"AUC_M_STATIC":  df_auc.loc[df_auc["Model"] == "M_STATIC",  "SEP-AUC Mean"].values[0],
-            "AUC_M_DYNAMIC": df_auc.loc[df_auc["Model"] == "M_DYNAMIC", "SEP-AUC Mean"].values[0]}])
-        plot_auc_fairness_bar(df_auc=bar_df, out_dir=out_dir, attr_name=ATTR_NAME,filename="fairness_auc_comparison.png")
+    bar_df = pd.DataFrame([{"AUC_M_STATIC": static_sep, "AUC_M_DYNAMIC": dynamic_sep}])
+    plot_auc_fairness_bar(df_auc=bar_df, out_dir=out_dir, attr_name=ATTR_NAME,filename="fairness_auc_comparison.png")
 
     print(f"\n Fairness outputs saved in: {out_dir}")
     return df_dyn_lmk, df_auc
@@ -213,8 +200,10 @@ def run_fairness_analysis(y_dynamic, dynamic_oof, sens_dynamic, lmk_vals,
 def main():
     args = parse_args()
     cfg  = load_config(args.config, args)
-    out_dir = Path(args.out_dir) if args.out_dir else \
-              Path("outputs") / "simulation" / args.scenario
+     if args.out_dir:
+        out_dir = Path(args.out_dir)
+    else:
+        out_dir = Path("outputs") / "simulation" / args.scenario
     out_dir.mkdir(parents=True, exist_ok=True)
 
     run_tag = (f"simulation_low_{args.scenario}_{cfg['eo_mode_d']}_S:{cfg['beta']}_D:{cfg['alpha']}")
@@ -261,6 +250,7 @@ def main():
         cat_cols=CAT_COLS_SIM, landmarks=cfg["landmarks"],horizon=cfg["horizon"], delta=cfg.get("delta", 1),
         id_col=ID_COL, time_col=TIME_COL,first_event_col="FirstEventTime",
         sens_col="sens_loan", enc_cat=enc_cat)
+    
     del df; gc.collect()
 
     t_min = float(min(cfg["landmarks"]))
@@ -277,6 +267,7 @@ def main():
         groups=static_data["groups"], sensitive=static_data["sensitive"],
         model_name="static", n_splits=cfg["n_folds"], group_names=GROUP_NAMES_SIM,  
         splits=splits_s, **train_kwargs)
+    
     n_bins = cfg["horizon"] // cfg.get("delta", 1)
 
     print("\nTraining M_DYNAMIC...")
@@ -288,25 +279,20 @@ def main():
         group_names=GROUP_NAMES_SIM, splits=splits_d,
         bin_times=dynamic_data["bin_time_vals"],feat_names=dynamic_data["feature_names"],
         delta=cfg.get("delta", 1),device=DEVICE,**train_kwargs)
-    mask_d = res_dynamic["is_test"]
-    mask_s = res_static["is_test"]
-
-    pdh_df = pd.concat([
-        collapse_fold_full_horizon(model_k, scaler_k,dynamic_data["X"], dynamic_data["y"], dynamic_data["groups"],
-            dynamic_data["lmk_vals"], dynamic_data["bin_time_vals"],
-            dynamic_data["feature_names"],test_idx, n_bins, cfg.get("delta", 1), DEVICE)
-        
-        for (model_k, scaler_k), (_, _, test_idx)
-        in zip(res_dynamic["fold_models"], splits_d)
-    ], ignore_index=True)
+    pdh_parts = []
+    for (model_k, scaler_k), (_, _, test_idx) in zip(res_dynamic["fold_models"], splits_d):
+        coll = collapse_fold_full_horizon(model_k, scaler_k, dynamic_data["X"], dynamic_data["y"], dynamic_data["groups"],
+            dynamic_data["lmk_vals"], dynamic_data["bin_time_vals"], dynamic_data["feature_names"],
+            test_idx, n_bins, cfg.get("delta", 1), DEVICE)
+        pdh_parts.append(coll)
+    pdh_df = pd.concat(pdh_parts, ignore_index=True)
 
     # Indicate the probability of default at from L to h
-    dyn_pd  = pdh_df["pdh"].to_numpy()
+    dyn_pd = pdh_df["pdh"].to_numpy()
     # Indicate if there is the event in any of the bin
     dyn_yh = pdh_df["yh"].to_numpy()
-    dyn_L   = pdh_df["L"].to_numpy()
+    dyn_L = pdh_df["L"].to_numpy()
     dyn_ids = pdh_df["id"].to_numpy()
-
     th_dynamic = res_dynamic["threshold"]
 
     bin_ids = dynamic_data["groups"]
@@ -314,9 +300,7 @@ def main():
     id2g = id2g[~id2g.index.duplicated(keep="first")]
     dyn_sens_collapsed = pd.Series(dyn_ids).map(id2g).to_numpy()
 
-    # Summary
     summary = build_summary_table({"M_STATIC":  res_static,"M_DYNAMIC": res_dynamic})
-    
   
     print("\n=== CV RESULTS ===")
     print(summary.to_string(index=False))
@@ -326,12 +310,9 @@ def main():
         import wandb
         for _, row in summary.iterrows():
             m = row["Model"].lower()
-            wandb.log({
-                f"{m}/AUC_iAUC_Mean": row["AUC/iAUC Mean"],
-                f"{m}/AUC_iAUC_SD":   row["AUC/iAUC SD"],
-                f"{m}/BS_IBS_Mean":   row["BS/IBS Mean"],
-                f"{m}/BS_IBS_SD":     row["BS/IBS SD"],
-            })
+            wandb.log({f"{m}/AUC_iAUC_Mean": row["AUC/iAUC Mean"],
+                f"{m}/AUC_iAUC_SD":   row["AUC/iAUC SD"],f"{m}/BS_IBS_Mean":   row["BS/IBS Mean"],
+                f"{m}/BS_IBS_SD":     row["BS/IBS SD"]})
 
     # Fairness analysis
     print("\n" + "="*60)
