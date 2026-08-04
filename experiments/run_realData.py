@@ -46,22 +46,6 @@ torch.manual_seed(SEED)
 torch.cuda.manual_seed(SEED)
 torch.backends.cudnn.deterministic = True
 
-
-def plot_pd_by_landmark_group(dyn_pd, dyn_L, sens_arr, group_names, out_dir, title, filename):
-    df = pd.DataFrame({"L": dyn_L, "pd": dyn_pd, "sens": sens_arr})
-    agg = df.groupby(["L", "sens"])["pd"].mean().unstack()
-    fig, ax = plt.subplots(figsize=(8,5))
-    for g in agg.columns:
-        ax.plot(agg.index, agg[g], marker="o", label=group_names.get(g, str(g)))
-    ax.set_xlabel("Landmark")
-    ax.set_ylabel("PD-H mean")
-    ax.set_title(title)
-    ax.legend()
-    ax.grid(alpha=0.3)
-    plt.savefig(out_dir / filename, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-
-
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--data_path", required=True)
@@ -305,9 +289,6 @@ def main():
     splits=splits_d, bin_times=dynamic_data["bin_time_vals"],
     feat_names=dynamic_data["feature_names"],
     delta=cfg.get("delta", 4),device=DEVICE,**train_kwargs)
-    
-    mask_d = res_dynamic["is_test"]
-    mask_s = res_static["is_test"]
 
     # Recompute PD-H per fold to measure performance
     pdh_parts = []
@@ -354,12 +335,6 @@ def main():
         id2g = id2g[~id2g.index.duplicated(keep="first")] 
         dyn_sens_collapsed[attr] = pd.Series(dyn_ids).map(id2g).to_numpy()
 
-    plot_pd_by_landmark_group(dyn_pd=dyn_pd,dyn_L=dyn_L,
-    sens_arr=dyn_sens_collapsed[args.fair_attr],  
-    group_names=GROUP_NAMES[args.fair_attr],
-    out_dir=out_dir,
-    title=f"PD-H per landmark — M_DYNAMIC (α={cfg['alpha']})",
-    filename=f"pd_by_landmark_{args.fair_attr}_alpha{cfg['alpha']}.png",)
 
     df_dyn_lmk, df_auc = run_fairness_analysis( y_dynamic=dyn_yh,dynamic_oof=dyn_pd,sens_dynamic=dyn_sens_collapsed[args.fair_attr],
     lmk_vals=dyn_L,out_dir=out_dir, cfg=cfg,th_dynamic=th_dynamic,fair_attr=args.fair_attr,
