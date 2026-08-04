@@ -208,7 +208,8 @@ def main():
     if args.out_dir:
         out_dir = Path(args.out_dir)
     else:
-        out_dir = Path("outputs") / "realData" / args.fair_attr    out_dir.mkdir(parents=True, exist_ok=True)
+        out_dir = Path("outputs") / "realData" / args.fair_attr
+        out_dir.mkdir(parents=True, exist_ok=True)
         
     run_tag = (f"realData_{args.fair_attr}_{cfg['eo_mode_d']}_S:{cfg['beta']}_D:{cfg['alpha']}")
 
