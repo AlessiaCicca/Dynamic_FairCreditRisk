@@ -7,7 +7,7 @@ Dynamic Credit Risk
 Fairness Penalization in Discrete-Time Survival Models
 </h3>
 
-This repository contains the source code developed as part of a Master's thesis in Data Science and Engineering at the Politecnico di Torino during the 2025–2026 academic year.
+This repository contains the source code developed as part of a Master's thesis in **Data Science and Engineering** at the **Politecnico di Torino** during the 2025–2026 academic year.
 
 The core contribution is an in-processing fairness penalty designed for a discrete-time
 survival landmark model (`M_DYNAMIC`), where equalized odds is enforced across the loan lifetime rather than at a single point. A static binary classifier (`M_STATIC`) serves as the baseline, letting us compare how fairness behaves when it is imposed once at origination against when it is maintained dynamically across landmarks.
