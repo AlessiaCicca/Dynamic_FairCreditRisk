@@ -12,7 +12,7 @@ This repository contains the source code developed as part of a Master's thesis 
 The core contribution is an in-processing fairness penalty designed for a discrete-time
 survival landmark model (`M_DYNAMIC`), where equalized odds is enforced across the loan lifetime rather than at a single point. A static binary classifier (`M_STATIC`) serves as the baseline, letting us compare how fairness behaves when it is imposed once at origination against when it is maintained dynamically across landmarks.
 <p align="center">
-  <img src="schema.png" width="800" alt="Descrizione">
+  <img src="mlp_arch.png" width="800" alt="Descrizione">
 </p>
 
 ## What this project does
